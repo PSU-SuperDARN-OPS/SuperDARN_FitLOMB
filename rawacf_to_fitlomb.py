@@ -23,51 +23,51 @@ DF_IDX = 2
 class LombFit:
     def __init__(self, record):
         self.rawacf = record # dictionary copy of RawACF record
-        self.lags = range(record['mplgs']) # range of lags
-        self.nlags = record['mplgs'] # number of lags
-        self.ranges = range(record['nrang']) # range gates
-        self.nranges = record['nrang'] # range gates
-        self.pulses = record['ptab'] # (mppul length list): pulse table
-        self.npulses = record['mppul'] # number of pulses
-        self.ltab = record['ltab'] # (mplgs x 2 length list): lag table
+        self.lags = range(self.rawacf['mplgs']) # range of lags
+        self.nlags = self.rawacf['mplgs'] # number of lags
+        self.ranges = range(self.rawacf['nrang']) # range gates
+        self.nranges = self.rawacf['nrang'] # range gates
+        self.pulses = self.rawacf['ptab'] # (mppul length list): pulse table
+        self.npulses = self.rawacf['mppul'] # number of pulses
+        self.ltab = self.rawacf['ltab'] # (mplgs x 2 length list): lag table
         self.t_first = self.rawacf['lagfr'] # lag to first range in us
         self.t_pulse = self.rawacf['mpinc'] # multi pulse increment (tau, basic lag time) 
         self.smsep = self.rawacf['smsep'] # sample separation in us
         self.txpl = self.rawacf['txpl'] # sample separation in us
         self.rsep = self.rawacf['rsep'] # range gate separation in km
-        self.acfd = self.record['acfd'] # acf values
+        self.acfd = self.rawacf['acfd'] # acf values
         
         # TODO: copy over pwr0, ltab, ptab, slist, nlag
         # TODO:
         #       get widththreshold and peakthreshold.. 
 
-        self.freqs = linspace(0, 500, 100) # TODO: calculate frequencies in lomb spectrum
+        self.freqs = np.linspace(-1./(2 * self.t_pulse), 1./(2 * self.t_pulse), self.nlags * 8) * 1e6
         self.maxwidth = 20
         self.widththreshold = .95 # widththreshold - statistical significance threshold for finding the extend of a peak
         self.peakthreshold = .5 # peakthreshold - statistical significance threshold for finding returns
 
-        self.qflg = np.zeros(nranges)
-        self.gflg = np.zeros(nranges)
+        self.qflg = np.zeros(self.nranges)
+        self.gflg = np.zeros(self.nranges)
 
         # initialize empty arrays for fitted parameters 
-        self.v          = [[] for r in range(nranges)]
-        self.v_e        = [[] for r in range(nranges)]
+        self.v          = [[] for r in range(self.nranges)]
+        self.v_e        = [[] for r in range(self.nranges)]
  
-        self.sd_s       = [[] for r in range(nranges)]
-        self.w_s_e      = [[] for r in range(nranges)]
-        self.w_s        = [[] for r in range(nranges)]
-        self.p_s        = [[] for r in range(nranges)]
-        self.p_s_e      = [[] for r in range(nranges)]
-        self.v_s        = [[] for r in range(nranges)]
-        self.v_s_e      = [[] for r in range(nranges)]
+        self.sd_s       = [[] for r in range(self.nranges)]
+        self.w_s_e      = [[] for r in range(self.nranges)]
+        self.w_s        = [[] for r in range(self.nranges)]
+        self.p_s        = [[] for r in range(self.nranges)]
+        self.p_s_e      = [[] for r in range(self.nranges)]
+        self.v_s        = [[] for r in range(self.nranges)]
+        self.v_s_e      = [[] for r in range(self.nranges)]
 
-        self.sd_l       = [[] for r in range(nranges)]
-        self.w_l_e      = [[] for r in range(nranges)]
-        self.w_l        = [[] for r in range(nranges)]
-        self.p_l        = [[] for r in range(nranges)]
-        self.p_l_e      = [[] for r in range(nranges)]
-        self.v_l        = [[] for r in range(nranges)]
-        self.v_l_e      = [[] for r in range(nranges)]
+        self.sd_l       = [[] for r in range(self.nranges)]
+        self.w_l_e      = [[] for r in range(self.nranges)]
+        self.w_l        = [[] for r in range(self.nranges)]
+        self.p_l        = [[] for r in range(self.nranges)]
+        self.p_l_e      = [[] for r in range(self.nranges)]
+        self.v_l        = [[] for r in range(self.nranges)]
+        self.v_l_e      = [[] for r in range(self.nranges)]
 
         self.ProcessPulse()
     
@@ -79,7 +79,7 @@ class LombFit:
     # processes the pulse (move it __init__)?
     def ProcessPulse(self):
         for r in self.ranges:
-            peaks = ProcessPeaks(r)
+            peaks = self.ProcessPeaks(r)
 
     # finds returns in spectrum and records cell velocity
     def ProcessPeaks(self, rgate):
@@ -95,13 +95,14 @@ class LombFit:
         
         i_lags = i_lags[good_lags == True]
         q_lags = q_lags[good_lags == True]
-        t = arange(0, self.nlags * self.t_pulse, self.t_pulse)[good_lags == True]
+        t = np.arange(0, self.nlags * self.t_pulse, self.t_pulse)[good_lags == True] / 1e6
         
         samples = i_lags + 1j * q_lags
 
         # calcuate lomb-scargle periodogram
         lomb_range = lomb(samples, t, self.freqs)
-        prob_range = lomb_ztop(lo, self.freqs)
+        prob_range = lomb_ztop(lomb_range, self.freqs)
+        lomb_range *= ((2 * np.std(samples)) / len(self.freqs)) # de-normalize spectrum
 
         # find peaks (assuming "well separated" peaks...)
         threshidxs = np.arange(len(self.freqs))[prob_range < self.peakthreshold]
@@ -122,14 +123,21 @@ class LombFit:
         self.gflg[rgate] = 0
 
         # unsupported: sd_phi
-         
-        for peakidx in peakidxs:
-            # extract peak
-            seg_idxs = get_segment(threshwidth, peakidx)
-            seg_freqs = self.freqs[seg_idxs] - self.freqs[peakidx]
-            seg_powers = lo[seg_idxs]
-
-            self.ProcessPeaks(rgate, peakidx, seg_idxs, seg_powers)
+        plt.subplot(3,1,1)
+        plt.plot(i_lags)
+        plt.plot(q_lags)
+        plt.subplot(3,1,2)
+        plt.plot(self.freqs, lomb_range)
+        plt.subplot(3,1,3)
+        plt.plot(self.freqs, prob_range)
+        plt.show()
+        #for peakidx in peakidxs:
+        #    # extract peak
+        #    pdb.set_trace()
+        #    seg_idxs = get_segment(threshwidth, peakidx)
+        #    seg_freqs = self.freqs[seg_idxs] - self.freqs[peakidx]
+        #    seg_powers = lomb_range[seg_idxs]
+        #    self.ProcessPeaks(rgate, peakidx, seg_idxs, seg_powers)
 
     # processes a peak for sigma and lambda fit
     def ProcessPeak(self, rgate, peakidx, seg_idxs, seg_powers):
@@ -229,3 +237,4 @@ if __name__ == '__main__':
 
     del dfile
 
+    pdb.set_trace()

@@ -22,6 +22,8 @@ def lomb(samples, t, freqs, normalized = True):
 
 # calculate significance of a power
 # equation 3 in [1]
+# TODO: this doesn't work well with multiple returns...
+# shared power demotes everybody.. work out significance from p_0, or some other noise measure?
 def lomb_ztop(z, freqs):
     return 1-((1 - np.exp(-z)) ** len(freqs))
 
@@ -91,23 +93,22 @@ def get_segment(array, centeridx):
     return np.array(segmentidxs)
 
 if __name__ == '__main__':
-    f = 10
-    fs = 5000
-    t_total = .05
-    NOISE_SCALE = 2
+    fs = 1 
+    t_total = 25 * (1/fs)
+
+    NOISE_SCALE = .01
     
 
     t = np.arange(0,t_total,1./fs)
     noise = np.random.normal(scale=NOISE_SCALE,size=len(t)) + 1j * np.random.normal(scale=NOISE_SCALE,size=len(t))
     
-    sin1 = 1 * np.exp(1j * 2 * np.pi * t * 100) * np.exp(-t * 10) 
-    sin4 = 1 * np.exp(1j * 2 * np.pi * t * 10) * np.exp(-t * 8)
+    sin1 = 1 * np.exp(1j * 2 * np.pi * t * .2) * np.exp(-t *.1) 
+    sin4 = 1 * np.exp(1j * 2 * np.pi * t * .05) * np.exp(-t * .1)
     samples =  sin1 + sin4+ noise
-    freqs = np.linspace(-fs/2,fs/2,len(t) * 4)
-    
+    freqs = np.linspace(-fs/2.,fs/2.,len(t) * 4)
     lo = lomb(samples, t, freqs, normalized = True)
     prob = lomb_ztop(lo, freqs)
-    #lo = 10 * lo * (2 * np.std(samples) / len(freqs))# denormalize data after computing probabilities
+    lo *= ((2 * np.std(samples)) / len(freqs))# denormalize data after computing probabilities
 
     # plot results
     plt.subplot(3,1,1)
