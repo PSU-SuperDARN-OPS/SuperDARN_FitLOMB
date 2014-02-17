@@ -11,10 +11,11 @@
 # 
 
 import numpy as np
+import numexpr as ne
 import matplotlib.pyplot as plt
 import scipy.signal as signal
 import pdb
-
+# look into numexpr
 from scipy.optimize import curve_fit
 
 # copied from jef spaleta's code..
@@ -57,20 +58,6 @@ def find_fwhm(ia, pt_apex,da=1):
 
       return fwhm
 
-# the frequency response of a decaying exponential in the time domain
-# p * exp(-a * |x|)
-def lorentzian(freqs, a, p, df):
-    return p * ((2 * a)/(a ** 2 + 4 * (np.pi ** 2) * ((freqs-df) ** 2)))
-
-# the frequency reponse of a gaussian in the time domain
-# p * exp(-alpha * (x ** 2))
-def gaussian(freqs, alpha, p, df):
-    return p * np.sqrt(np.pi / alpha) * np.exp(-(((np.pi * (freqs-df))**2)/alpha))
-
-# lo - numpy array with spectrum
-# prob - significance array
-# freqs - numpy array of frequencies 
-
 # returns an array of indexes of input array
 # for items in array centered on centeridx which are True
 # this is probably not a pythonic approach.. see image segmentation?
@@ -99,12 +86,11 @@ def get_segment(array, centeridx):
 # t - sample times (may not be continuous)
 # ts - sampling rate 
 # alfs - range of time constants in exponential to check 
-# env_model - envelope model (function of samples, ts, a, lambda
-#           a - amplitude
-#           l - decay rate
+# env_model - 1 for labmda and 2 for sigma fit
 
 # returns fit, with model parameters, a frequency, and a significance
 # for simultaneous complex samples, normalized frequency, ts normalized to 1s
+@profile
 def calculate_bayes(s, t, f, alfs, env_model = 1):
     N = len(t) * 2# see equation (10) in [4]
     m = 2
@@ -121,6 +107,13 @@ def calculate_bayes(s, t, f, alfs, env_model = 1):
     ce_matrix = np.zeros([len(omegas), len(t), len(alfs)])
     se_matrix = np.zeros([len(omegas), len(t), len(alfs)])
     
+    # about 80% of execution time spent here..
+    # ~ 400000
+    # kernprof.py -l iterative_bayes.py
+    # python -m line_profiler iterative_bayes.py.lprof
+
+    # so... 
+
     for (k, alf) in enumerate(alfs):
         for (j, ti) in enumerate(t):
             ce_matrix[:,j,k] = c_matrix[:,j] * np.exp(-(alf ** env_model) * ti)
@@ -130,6 +123,8 @@ def calculate_bayes(s, t, f, alfs, env_model = 1):
     # these reduce to the real and complex parts of the fourier transform for uniformly sampled data
     # matricies, len(freqs) by len(samples)
     # omegas * times * alphas
+    # TODO: [12] has real - imag, but jef has real + imag. only jef's way works.. why?
+    # about 10% of execution time spent here
     R_f = (np.dot(np.real(s), ce_matrix) + np.dot(np.imag(s), se_matrix)).T
     I_f = (np.dot(np.real(s), se_matrix) - np.dot(np.real(s), ce_matrix)).T
 
@@ -142,9 +137,14 @@ def calculate_bayes(s, t, f, alfs, env_model = 1):
     
     # should S_r * C_i be removed for this case?
     # hbar2 is a "sufficient statistic" 
-    hbar2 = ((R_f ** 2) / C_f + (I_f ** 2) / S_f) / 2# (19) in [4] 
+    hbar2 = ((R_f ** 2) / C_f + (I_f ** 2) / S_f) / 2.# (19) in [4] 
     
     P_f = ((N * dbar2 - hbar2) ** ((2 - N) / 2.)) / np.sqrt(C_f * S_f) # (18) in [4]
+    
+    #P_f = ne.evaluate('((N * dbar2 - hbar2) ** ((2 - N) / 2.)) / sqrt(C_f * S_f)')
+    # see "Nonuniform Sampling: Bandwidth and Aliasing"
+    # for <sigma**2> and P(f|DI)
+
     return P_f
 
 # finds the maximum index of the 2d lomb output probability prob, returns the model
@@ -175,7 +175,7 @@ if __name__ == '__main__':
     ts = 1./fs
     t_total = 50 * (1/fs)
     nfreqs_mult = 10
-    NOISE_SCALE = 1e-6
+    NOISE_SCALE = .01 
     MAX_SIGNALS = 2
     alfs = np.linspace(0,1,50) # range of possible decay rates
     t = np.arange(0,t_total,1./fs)
@@ -184,7 +184,7 @@ if __name__ == '__main__':
     freqs = np.linspace(-.5/ts, .5/ts, nfreqs)
 
     noise = np.random.normal(scale=NOISE_SCALE,size=len(t)) + 1j * np.random.normal(scale=NOISE_SCALE,size=len(t))
-    sin1 = 1 * np.exp(1j * 2 * np.pi * t * -.25) * np.exp(-t *.2) 
+    sin1 = 1 * np.exp(1j * 2 * np.pi * t * -.25) * np.exp(-t *.10) 
     sin2 = 1 * np.exp(1j * 2 * np.pi * t * .07) * np.exp(-t * .02)
     samples =  sin1 + sin2 + noise
 
