@@ -10,6 +10,7 @@ from complex_lomb import *
 import numpy as np
 import matplotlib.pyplot as plt
 
+from libfitacf import get_badsamples, get_badlags
 from scipy.optimize import curve_fit
 import scipy.signal as signal
 
@@ -71,7 +72,17 @@ class LombFit:
 
         self.ProcessPulse()
     
-    # writes out an hdf5 record of the lss fit
+    # calculates the average noise the given lag (how?) 
+    # find non-bad lags for each range
+    # with real and complex values below limit (what limit?)
+    # concatenate samples, calculate ACF
+    def CalcSpectrumNoiseLevel(self):
+        noise_samples = []
+        for r in self.ranges:
+            pass       
+
+
+    # writes out a record of the lss fit
     def WriteLSSFit(self):
         pass         
 
@@ -210,9 +221,7 @@ class LombFit:
 
         badsamples = sorted(list(set(badsamples))) # remove duplicates, and sort list of bad samples
     
-        
 
-        
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')

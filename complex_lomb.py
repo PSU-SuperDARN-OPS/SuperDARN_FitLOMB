@@ -24,12 +24,17 @@ def lomb(samples, t, freqs, normalized = True):
 # equation 3 in [1]
 # TODO: this doesn't work well with multiple returns...
 # shared power demotes everybody.. work out significance from p_0, or some other noise measure?
+# instead.. calculate probability of a awgn with p_0 average power being above power z...
+# also, this is invalid for small number of samples? see M. Zechmeister, M. Kurster 2009
 def lomb_ztop(z, freqs):
     return 1-((1 - np.exp(-z)) ** len(freqs))
 
-def lomb_ptoz(p, freqs):
-    return -np.log(1 - ((1 - p) ** (-len(freqs))))
 
+
+# calculates the probability of a point on the spectrum reaching the calculated power
+# 
+def lomb_significance(lo, freqs, p0):
+    pass
 
 # helper function for lomb peridogram
 # where t is numpy array of times, w is frequency in radians
@@ -41,7 +46,7 @@ def _p_w(samples, t, w, normalized = True):
         varscale = 1 / (2. * np.var(samples))
 
     else:
-        varscale = 1
+        varscale = 1.
 
     tau = sum(np.sin(2. * w * t)) / sum(np.cos(2. * w * t)) 
  
@@ -96,15 +101,17 @@ if __name__ == '__main__':
     fs = 1 
     t_total = 25 * (1/fs)
 
-    NOISE_SCALE = .01
-    
+    NOISE_SCALE = .05
 
     t = np.arange(0,t_total,1./fs)
+
     noise = np.random.normal(scale=NOISE_SCALE,size=len(t)) + 1j * np.random.normal(scale=NOISE_SCALE,size=len(t))
-    
-    sin1 = 1 * np.exp(1j * 2 * np.pi * t * .2) * np.exp(-t *.1) 
-    sin4 = 1 * np.exp(1j * 2 * np.pi * t * .05) * np.exp(-t * .1)
-    samples =  sin1 + sin4+ noise
+    sin1 = 1 * np.exp(1j * 2 * np.pi * t * .2) * np.exp(-t *.5) 
+    sin2 = 1 * np.exp(1j * 2 * np.pi * t * .3) * np.exp(-t *.6) 
+    sin3 = 1 * np.exp(1j * 2 * np.pi * t * .4) * np.exp(-t *.5) 
+    sin4 = 1 * np.exp(1j * 2 * np.pi * t * .05) * np.exp(-t * .02)
+    samples =  sin1 + sin4 + noise
+
     freqs = np.linspace(-fs/2.,fs/2.,len(t) * 4)
     lo = lomb(samples, t, freqs, normalized = True)
     prob = lomb_ztop(lo, freqs)
@@ -136,5 +143,3 @@ if __name__ == '__main__':
  
     plt.show()
     pdb.set_trace()
-
-
