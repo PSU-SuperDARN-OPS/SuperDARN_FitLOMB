@@ -95,8 +95,9 @@ def iterative_bayes(samples, t, freqs, alfs, maxfreqs = 4, env_model = 1):
     fits = []
     for i in range(maxfreqs):
         fit = calculate_bayes(samples, t, freqs, alfs, env_model = 1)
-        fits += fit 
+        fits.append(fit)
         samples -= fit['amplitude'] * np.exp(1j * 2 * np.pi * t * fit['frequency']) * np.exp(-t * fit['alpha'])
+    return fits
 
 def calculate_bayes(s, t, f, alfs, env_model = 1):
     N = len(t) * 2# see equation (10) in [4]

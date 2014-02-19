@@ -47,7 +47,7 @@ class LombFit:
         self.maxwidth = 20
         self.widththreshold = .95 # widththreshold - statistical significance threshold for finding the extend of a peak
         self.peakthreshold = .5 # peakthreshold - statistical significance threshold for finding returns
-        self.maxalf = 2
+        self.maxalf = 10
         self.alfsteps = 50
 
         self.qflg = np.zeros(self.nranges)
@@ -123,9 +123,8 @@ class LombFit:
         freqs = np.linspace(-1000, 1000, len(samples) * 20)
 
         # calcuate generalized lomb-scargle periodogram iteratively
-        self.lfits[rgate] = iterative_bayes(samples, t, freqs, alfs, maxfreqs = 4, env_model = 1)
-        self.sfits[rgate] = iterative_bayes(samples, t, freqs, alfs, maxfreqs = 4, env_model = 2)
-        pdb.set_trace()
+        self.lfits[rgate] = iterative_bayes(samples, t, freqs, alfs, maxfreqs = 2, env_model = 1)
+        self.sfits[rgate] = iterative_bayes(samples, t, freqs, alfs, maxfreqs = 2, env_model = 2)
         
         # TODO: calculate qflg, gflg (ground and quality flags)
         self.qflg[rgate] = 0
@@ -200,7 +199,7 @@ if __name__ == '__main__':
     i = 0
     for t in times:
         fit = LombFit(dfile[t])
-
+        pdb.set_trace()
 
     del dfile
 
