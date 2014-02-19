@@ -90,7 +90,6 @@ def get_segment(array, centeridx):
 
 # returns fit, with model parameters, a frequency, and a significance
 # for simultaneous complex samples, normalized frequency, ts normalized to 1s
-#@profile
 def iterative_bayes(samples, t, freqs, alfs, maxfreqs = 4, env_model = 1):
     fits = []
     for i in range(maxfreqs):
@@ -102,7 +101,6 @@ def iterative_bayes(samples, t, freqs, alfs, maxfreqs = 4, env_model = 1):
 def calculate_bayes(s, t, f, alfs, env_model = 1):
     N = len(t) * 2# see equation (10) in [4]
     m = 2
-
     dbar2 = (sum(np.real(s) ** 2) + sum(np.imag(s) ** 2)) / (N) # (11) in [4] 
 
     omegas = 2 * np.pi * f
@@ -175,8 +173,23 @@ def calculate_bayes(s, t, f, alfs, env_model = 1):
     fit = {}
     fit['amplitude'] = R_f[max_tuple] / C_f[max_tuple]
     fit['frequency'] = f[max_tuple[1]]
+    fit['frequency_fwhm'] = omega_fwhm
     fit['alpha'] = alfs[max_tuple[0]]
+    fit['alpha_fwhm'] = alf_fwhm
 
+    plt.plot(np.real(s))
+    plt.plot(np.imag(s))
+    fitsignal = fit['amplitude'] * np.exp(1j * 2 * np.pi * fit['frequency'] * t) * np.exp(-fit['alpha'] * t)
+    plt.plot(np.real(fitsignal))
+    plt.plot(np.imag(fitsignal))
+    plt.show()        
+
+    print 'alf: ' + str(fit['alpha'])
+    print 'alf_fwhm: ' + str(fit['alpha_fwhm'])
+    print 'frequency: ' + str(fit['frequency'])
+    print 'frequency_fwhm: ' + str(fit['frequency_fwhm'])
+    print 'amplitude: ' + str(fit['amplitude'])
+         
     return fit 
 
     # calculate amplitude estimate from A_est[max] = R_est[max] / C_est[max]
@@ -186,7 +199,7 @@ def calculate_bayes(s, t, f, alfs, env_model = 1):
 if __name__ == '__main__':
     fs = 1. 
     ts = 1./fs
-    t_total = 50 * (1/fs)
+    t_total = 20 * (1/fs)
     nfreqs_mult = 10
     NOISE_SCALE = .5 
     MAX_SIGNALS = 5
@@ -198,16 +211,14 @@ if __name__ == '__main__':
 
     noise = np.random.normal(scale=NOISE_SCALE,size=len(t)) + 1j * np.random.normal(scale=NOISE_SCALE,size=len(t))
     sin1 = 1 * np.exp(1j * 2 * np.pi * t * -.25) * np.exp(-t *.10) 
-    sin2 = 4 * np.exp(1j * 2 * np.pi * t * .07) * np.exp(-t * .02)
+    sin2 = 2 * np.exp(1j * 2 * np.pi * t * .07) * np.exp(-t * .02)
 
     samples =  sin1 + sin2 + noise
 
     for si in range(MAX_SIGNALS):
         fit = calculate_bayes(samples, t, freqs, alfs)
+        fit['index'] = si
 
-        print 'alf: ' + str(fit['alpha'])
-        print 'omega: ' + str(fit['frequency'])
-        print 'amplitude: ' + str(fit['amplitude'])
-
+        
         samples -= fit['amplitude'] * np.exp(1j * 2 * np.pi * t * fit['frequency']) * np.exp(-t * fit['alpha'])
     

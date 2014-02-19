@@ -47,8 +47,8 @@ class LombFit:
         self.maxwidth = 20
         self.widththreshold = .95 # widththreshold - statistical significance threshold for finding the extend of a peak
         self.peakthreshold = .5 # peakthreshold - statistical significance threshold for finding returns
-        self.maxalf = 10
-        self.alfsteps = 50
+        self.maxalf = 100
+        self.alfsteps = 400
 
         self.qflg = np.zeros(self.nranges)
         self.gflg = np.zeros(self.nranges)
@@ -113,7 +113,12 @@ class LombFit:
         # TODO: FIND GOOD LAGS MASK
         good_lags = np.ones(self.nlags)
         good_lags[self.bad_lags[rgate]] = False 
-
+        plt.subplot(2,1,1)
+        plt.plot(good_lags)
+        plt.subplot(2,1,2)
+        plt.plot(i_lags)
+        plt.plot(q_lags)
+        plt.show()
         i_lags = i_lags[good_lags == True]
         q_lags = q_lags[good_lags == True]
         t = np.arange(0, self.nlags * self.t_pulse, self.t_pulse)[good_lags == True] / 1e6
@@ -124,7 +129,7 @@ class LombFit:
 
         # calcuate generalized lomb-scargle periodogram iteratively
         self.lfits[rgate] = iterative_bayes(samples, t, freqs, alfs, maxfreqs = 2, env_model = 1)
-        self.sfits[rgate] = iterative_bayes(samples, t, freqs, alfs, maxfreqs = 2, env_model = 2)
+        #self.sfits[rgate] = iterative_bayes(samples, t, freqs, alfs, maxfreqs = 2, env_model = 2)
         
         # TODO: calculate qflg, gflg (ground and quality flags)
         self.qflg[rgate] = 0
@@ -199,8 +204,8 @@ if __name__ == '__main__':
     i = 0
     for t in times:
         fit = LombFit(dfile[t])
-        pdb.set_trace()
 
     del dfile
 
     pdb.set_trace()
+
