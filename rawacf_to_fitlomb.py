@@ -37,17 +37,18 @@ class LombFit:
         self.smsep = self.rawacf['smsep'] # sample separation in us
         self.txpl = self.rawacf['txpl'] # sample separation in us
         self.rsep = self.rawacf['rsep'] # range gate separation in km
-        self.acfd = self.rawacf['acfd'] # acf values
-        
+        self.acfi = self.rawacf['acfd'][I_OFFSET::2]
+        self.acfq = self.rawacf['acfd'][Q_OFFSET::2]
+        self.slist = self.rawacf['slist'] 
         # TODO: copy over pwr0, ltab, ptab, slist, nlag
         # TODO:
         #       get widththreshold and peakthreshold.. 
 
-        self.freqs = np.linspace(-1./(2 * self.t_pulse), 1./(2 * self.t_pulse), self.nlags * 8) * 1e6
+        self.freqs = np.linspace(-1./(2e-6 * self.t_pulse), 1./(2e-6 * self.t_pulse), self.nlags * 20)
         self.maxwidth = 20
         self.widththreshold = .95 # widththreshold - statistical significance threshold for finding the extend of a peak
         self.peakthreshold = .5 # peakthreshold - statistical significance threshold for finding returns
-        self.maxalf = 100
+        self.maxalf = 300
         self.alfsteps = 400
 
         self.qflg = np.zeros(self.nranges)
@@ -98,37 +99,52 @@ class LombFit:
     # processes the pulse (move it __init__)?
     def ProcessPulse(self):
         for r in self.ranges:
+            if (r != 15):
+                continue
             peaks = self.ProcessPeaks(r)
             print 'processing range ' + str(r)
 
     # finds returns in spectrum and records cell velocity
     def ProcessPeaks(self, rgate):
-        offset = rgate * self.nlags * 2
-        
+        offset = self.nlags * rgate
         # acfd is mplgs * nrang
         # see http://davit.ece.vt.edu/davitpy/_modules/pydarn/sdio/radDataTypes.html
-        i_lags = np.array(self.acfd[offset + I_OFFSET : offset+self.nlags * 2 : 2])
-        q_lags = np.array(self.acfd[offset + Q_OFFSET : offset+self.nlags * 2 : 2])
         
+        i_lags = np.array(self.acfi[offset:offset+self.nlags])
+        q_lags = np.array(self.acfq[offset:offset+self.nlags])
+        print self.acfi[offset]
+        print self.acfi[offset+1]
+        print self.acfq[offset]
+        print self.acfq[offset+1]
         # TODO: FIND GOOD LAGS MASK
         good_lags = np.ones(self.nlags)
         good_lags[self.bad_lags[rgate]] = False 
-        plt.subplot(2,1,1)
-        plt.plot(good_lags)
-        plt.subplot(2,1,2)
-        plt.plot(i_lags)
-        plt.plot(q_lags)
-        plt.show()
+
+        lags = map(lambda x : abs(x[1]-x[0]),self.rawacf['ltab'])[0:self.nlags]
+
+
+        print good_lags
+        #plt.subplot(2,1,1)
+        #plt.plot(good_lags)
+        #plt.subplot(2,1,2)
+        #plt.plot(i_lags)
+        #plt.plot(q_lags)
+
+
         i_lags = i_lags[good_lags == True]
         q_lags = q_lags[good_lags == True]
-        t = np.arange(0, self.nlags * self.t_pulse, self.t_pulse)[good_lags == True] / 1e6
+
+        t = (np.array(map(lambda x : abs(x[1]-x[0]),self.rawacf['ltab'])[0:self.nlags]) * self.t_pulse / 1e6)[good_lags == True]
+
+        #plt.show()
+
+        #np.arange(0, self.nlags * self.t_pulse, self.t_pulse)[good_lags == True] / 1e6
         
         samples = i_lags + 1j * q_lags
         alfs = np.linspace(0, self.maxalf, self.alfsteps)
-        freqs = np.linspace(-1000, 1000, len(samples) * 20)
 
         # calcuate generalized lomb-scargle periodogram iteratively
-        self.lfits[rgate] = iterative_bayes(samples, t, freqs, alfs, maxfreqs = 2, env_model = 1)
+        self.lfits[rgate] = iterative_bayes(samples, t, self.freqs, alfs, maxfreqs = 3, env_model = 1)
         #self.sfits[rgate] = iterative_bayes(samples, t, freqs, alfs, maxfreqs = 2, env_model = 2)
         
         # TODO: calculate qflg, gflg (ground and quality flags)
@@ -182,7 +198,7 @@ class LombFit:
         #bad_samples = get_badsamples(dfilet)
         bad_lags = [[] for i in range(self.nranges)]
 
-        for i in range(1,self.nranges):
+        for i in range(self.nranges):
             bad_lags[i] = get_badlags(self.rawacf, i)
         
         self.bad_lags = bad_lags
@@ -196,13 +212,15 @@ if __name__ == '__main__':
     parser.add_argument("--outfile", help="output FitLSS file")
     
     args = parser.parse_args() 
-
-    infile = '20140204.2200.04.kod.c.rawacf'
+    # on 3/20/2013, 8 AM UTC
+    infile = '20130320.0801.00.mcm.a.rawacf'
     dfile = DMapFile(files=[infile])
 
     times = dfile.times
     i = 0
     for t in times:
+        if(dfile[t]['bmnum'] != 9):
+            continue
         fit = LombFit(dfile[t])
 
     del dfile

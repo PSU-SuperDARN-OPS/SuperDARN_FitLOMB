@@ -10,6 +10,10 @@
 # approach:
 # 
 
+# TODO: add signal to noise ratio for calculations
+# TODO: add lambda power
+# TODO: add fit certainty
+
 import numpy as np
 import numexpr as ne
 import matplotlib.pyplot as plt
@@ -94,8 +98,27 @@ def iterative_bayes(samples, t, freqs, alfs, maxfreqs = 4, env_model = 1):
     fits = []
     for i in range(maxfreqs):
         fit = calculate_bayes(samples, t, freqs, alfs, env_model = 1)
+        fitsignal = fit['amplitude'] * np.exp(1j * 2 * np.pi * fit['frequency'] * t) * np.exp(-fit['alpha'] * t)
+
         fits.append(fit)
-        samples -= fit['amplitude'] * np.exp(1j * 2 * np.pi * t * fit['frequency']) * np.exp(-t * fit['alpha'])
+
+        plt.subplot(maxfreqs,1,i+1)
+        plt.plot(t,np.real(samples),'-.',color='r',linewidth=3)
+        plt.plot(t,np.imag(samples),'-.',color='b',linewidth=3)
+        plt.plot(t,np.real(fitsignal),color='r',linewidth=3)
+        plt.plot(t,np.imag(fitsignal),color='b',linewidth=3)
+        plt.grid(True)
+
+        txfreq = 10.7e6
+        vel = (fit['frequency'] * 3e8) / (2 * txfreq)
+        plt.title('pass ' + str(i) + ' samples and fit, velocity (m/s): ' + str(vel))
+        plt.legend(['I samples', 'Q samples', 'I fit', 'Q fit'])
+        plt.xlabel('time (seconds)')
+        plt.ylabel('amplitude')
+
+        samples -= fitsignal
+
+    plt.show()
     return fits
 
 def calculate_bayes(s, t, f, alfs, env_model = 1):
@@ -177,13 +200,6 @@ def calculate_bayes(s, t, f, alfs, env_model = 1):
     fit['alpha'] = alfs[max_tuple[0]]
     fit['alpha_fwhm'] = alf_fwhm
 
-    plt.plot(np.real(s))
-    plt.plot(np.imag(s))
-    fitsignal = fit['amplitude'] * np.exp(1j * 2 * np.pi * fit['frequency'] * t) * np.exp(-fit['alpha'] * t)
-    plt.plot(np.real(fitsignal))
-    plt.plot(np.imag(fitsignal))
-    plt.show()        
-
     print 'alf: ' + str(fit['alpha'])
     print 'alf_fwhm: ' + str(fit['alpha_fwhm'])
     print 'frequency: ' + str(fit['frequency'])
@@ -219,6 +235,7 @@ if __name__ == '__main__':
         fit = calculate_bayes(samples, t, freqs, alfs)
         fit['index'] = si
 
-        
+    
         samples -= fit['amplitude'] * np.exp(1j * 2 * np.pi * t * fit['frequency']) * np.exp(-t * fit['alpha'])
     
+    plt.show()        
