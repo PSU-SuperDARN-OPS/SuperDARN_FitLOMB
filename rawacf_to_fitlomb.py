@@ -7,6 +7,8 @@ import h5py
 from sd_data_tools import *
 from pydmap import DMapFile, timespan, dt2ts, ts2dt
 from complex_lomb import *
+from timecube import TimeCube
+
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -14,7 +16,7 @@ from libfitacf import get_badsamples, get_badlags
 from scipy.optimize import curve_fit
 import scipy.signal as signal
 
-from iterative_bayes import iterative_bayes, make_spacecube
+from iterative_bayes import iterative_bayes
 I_OFFSET = 0
 Q_OFFSET = 1
 
@@ -27,6 +29,7 @@ C = 3e8
 
 ce_matrix = []
 se_matrix = []
+CS_f = []
 
 class LombFit:
     def __init__(self, record):
@@ -93,8 +96,6 @@ class LombFit:
 
         self.CalcBadlags()
 
-        self.ProcessPulse()
-    
     # calculates the average noise the given lag (how?) 
     # find non-bad lags for each range
     # with real and complex values below limit (what limit?)
@@ -111,25 +112,20 @@ class LombFit:
 
     # calculates FitACF-like parameters for each peak in the spectrum
     # processes the pulse (move it __init__)?
-    def ProcessPulse(self):
+    def ProcessPulse(self, cubecache):
         for r in self.ranges:
             if (r != 15):
                 continue
-            peaks = self.ProcessPeaks(r)
-            print 'processing range ' + str(r)
+            peaks = self.ProcessPeaks(r, cubecache)
 
     # finds returns in spectrum and records cell velocity
-    def ProcessPeaks(self, rgate):
+    def ProcessPeaks(self, rgate, cubecache):
         offset = self.nlags * rgate
         # acfd is mplgs * nrang
         # see http://davit.ece.vt.edu/davitpy/_modules/pydarn/sdio/radDataTypes.html
         
         i_lags = np.array(self.acfi[offset:offset+self.nlags])
         q_lags = np.array(self.acfq[offset:offset+self.nlags])
-        print self.acfi[offset]
-        print self.acfi[offset+1]
-        print self.acfq[offset]
-        print self.acfq[offset+1]
         # TODO: FIND GOOD LAGS MASK
         good_lags = np.ones(self.nlags)
         good_lags[self.bad_lags[rgate]] = False 
@@ -137,7 +133,6 @@ class LombFit:
         lags = map(lambda x : abs(x[1]-x[0]),self.rawacf['ltab'])[0:self.nlags]
 
 
-        print good_lags
         #plt.subplot(2,1,1)
         #plt.plot(good_lags)
         #plt.subplot(2,1,2)
@@ -158,7 +153,7 @@ class LombFit:
         alfs = np.linspace(0, self.maxalf, self.alfsteps)
 
         # calcuate generalized lomb-scargle periodogram iteratively
-        self.lfits[rgate] = iterative_bayes(samples, t, self.freqs, alfs, maxfreqs = 3, env_model = 1)
+        self.lfits[rgate] = iterative_bayes(samples, t, self.freqs, alfs, cubecache, maxfreqs = 3, env_model = 1)
         #self.sfits[rgate] = iterative_bayes(samples, t, freqs, alfs, maxfreqs = 2, env_model = 2)
         
 
@@ -233,13 +228,15 @@ if __name__ == '__main__':
 
     times = dfile.times
     i = 0
+    cubecache = TimeCube()
+
     for t in times:
-        print 'processing time ' + str(t)
         if(dfile[t]['bmnum'] != 9):
             continue
         fit = LombFit(dfile[t])
+        fit.ProcessPulse(cubecache)
         i += 1
-        if i > 20:
+        if i > 40:
             break
     del dfile
 
