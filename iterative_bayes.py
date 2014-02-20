@@ -94,7 +94,7 @@ def get_segment(array, centeridx):
 
 # returns fit, with model parameters, a frequency, and a significance
 # for simultaneous complex samples, normalized frequency, ts normalized to 1s
-def iterative_bayes(samples, t, freqs, alfs, maxfreqs = 4, env_model = 1):
+def iterative_bayes(samples, t, freqs, alfs, maxfreqs = 4, fmax = 4e3, env_model = 1):
     fits = []
     for i in range(maxfreqs):
         fit = calculate_bayes(samples, t, freqs, alfs, env_model = 1)
@@ -102,79 +102,112 @@ def iterative_bayes(samples, t, freqs, alfs, maxfreqs = 4, env_model = 1):
 
         fits.append(fit)
 
-        plt.subplot(maxfreqs,1,i+1)
-        plt.plot(t,np.real(samples),'-.',color='r',linewidth=3)
-        plt.plot(t,np.imag(samples),'-.',color='b',linewidth=3)
-        plt.plot(t,np.real(fitsignal),color='r',linewidth=3)
-        plt.plot(t,np.imag(fitsignal),color='b',linewidth=3)
-        plt.grid(True)
+        #plt.subplot(maxfreqs,1,i+1)
+        #plt.plot(t,np.real(samples),'-.',color='r',linewidth=3)
+        #plt.plot(t,np.imag(samples),'-.',color='b',linewidth=3)
+        #plt.plot(t,np.real(fitsignal),color='r',linewidth=3)
+        #plt.plot(t,np.imag(fitsignal),color='b',linewidth=3)
+        #plt.grid(True)
 
-        txfreq = 10.7e6
-        vel = (fit['frequency'] * 3e8) / (2 * txfreq)
-        plt.title('pass ' + str(i) + ' samples and fit, velocity (m/s): ' + str(vel))
-        plt.legend(['I samples', 'Q samples', 'I fit', 'Q fit'])
-        plt.xlabel('time (seconds)')
-        plt.ylabel('amplitude')
+        #txfreq = 10.7e6
+        #vel = (fit['frequency'] * 3e8) / (2 * txfreq)
+        #plt.title('pass ' + str(i) + ' samples and fit, velocity (m/s): ' + str(vel))
+        #plt.legend(['I samples', 'Q samples', 'I fit', 'Q fit'])
+        #plt.xlabel('time (seconds)')
+        #plt.ylabel('amplitude')
 
         samples -= fitsignal
 
-    plt.show()
+    #plt.show()
     return fits
 
-def calculate_bayes(s, t, f, alfs, env_model = 1):
-    N = len(t) * 2# see equation (10) in [4]
-    m = 2
-    dbar2 = (sum(np.real(s) ** 2) + sum(np.imag(s) ** 2)) / (N) # (11) in [4] 
-
-    omegas = 2 * np.pi * f
-
+# prepare variables which are common between bayes passes
+# (about 90% of execution time is spent here if this is calculated for each rage gate..)
+# so, calculate once and pass to bayes calculations
+def make_spacecube(t, f, alfs, env_model):
     # create ce_matrix and se_matrix..
-    # cos(w * t) * exp(-alf * t) for varying frequency, decay, and time 
+    # sin and cos(w * t) * exp(-alf * t) cubes
+    
+    omegas = 2 * np.pi * f
     c_matrix = np.cos(np.outer(omegas, t))
     s_matrix = np.sin(np.outer(omegas, t))
-    
-    ce_matrix = np.zeros([len(omegas), len(t), len(alfs)])
-    se_matrix = np.zeros([len(omegas), len(t), len(alfs)])
+   
+    # create cube of time by frequency with no decay
+    c_cube = np.tile(c_matrix, (len(alfs),1,1))
+    s_cube = np.tile(s_matrix, (len(alfs),1,1))
+
+    #ce_matrix = np.zeros([len(omegas), len(t), len(alfs)])
+    #se_matrix = np.zeros([len(omegas), len(t), len(alfs)])
     
     # about 80% of execution time spent here..
     # ~ 400000
     # kernprof.py -l iterative_bayes.py
     # python -m line_profiler iterative_bayes.py.lprof
 
-    # so... 
+    # so... create cube of alpha by time at dc 
     envelope = np.exp(np.outer(-(alfs ** env_model), t))
+    envelope_cube = np.tile(envelope, (len(c_matrix), 1,1))
+  
+    # rearrange cubes to match format of ce_matrix and se_matrix
+    envelope_cube = np.swapaxes(envelope_cube, 1, 2)
+    c_cube = np.swapaxes(c_cube, 0, 1)
+    c_cube = np.swapaxes(c_cube, 1, 2)
+    s_cube = np.swapaxes(s_cube, 0, 1)
+    s_cube = np.swapaxes(s_cube, 1, 2)
 
-    for (k, alf) in enumerate(alfs):
-        for (j, ti) in enumerate(t):
-            ce_matrix[:,j,k] = c_matrix[:,j] * envelope[k, j] 
-            se_matrix[:,j,k] = s_matrix[:,j] * envelope[k, j] 
+    #for (k, alf) in enumerate(alfs):
+    #    for (j, ti) in enumerate(t):
+    #        ce_matrix[:,j,k] = c_matrix[:,j] * envelope[k, j] 
+    #        se_matrix[:,j,k] = s_matrix[:,j] * envelope[k, j] 
+    
+    # smash 'em together. (this is *much* faster than the above (clearer?) commented out approach)
+    ce_matrix = c_cube * envelope_cube
+    se_matrix = s_cube * envelope_cube
+   
+    # C_f and S_f don't vary with the samples, only the envelopes
+    # also.. C_f = S_f for simultaenous samples
+    # so, lets only calculate this once per set of alpha/frequency/timespan
+
+    # calculate C_f and S_f (14) and (15) in [4]
+    # simultaneous sampling, so C_f and S_f reduce to the total power in envelope model
+    z_matrix = np.ones([len(omegas), len(alfs)])
+    for (k, alf) in enumerate(alfs): 
+        z_matrix[:,k] *= sum(envelope[k,:] ** 2)
+
+    CS_f = z_matrix.T
+
+    return ce_matrix, se_matrix, CS_f
+
+
+
+def calculate_bayes(s, t, f, alfs, ce_matrix = [], se_matrix = [], env_model = 1):
+    N = len(t) * 2# see equation (10) in [4]
+    m = 2
+    dbar2 = (sum(np.real(s) ** 2) + sum(np.imag(s) ** 2)) / (N) # (11) in [4] 
 
     # create R_f and C_f (12) and (13) in [4]
     # these reduce to the real and complex parts of the fourier transform for uniformly sampled data
     # matricies, len(freqs) by len(samples)
     # omegas * times * alphas
     # TODO: [12] has real - imag, but jef has real + imag. only jef's way works.. why?
-    # about 10% of execution time spent here
+    
+    # about 10% of execution time spent here, do this on grapics card?
+    # see http://lebedov.github.io/scikits.cuda/generated/scikits.cuda.linalg.dot.html
     R_f = (np.dot(np.real(s), ce_matrix) + np.dot(np.imag(s), se_matrix)).T
     I_f = (np.dot(np.real(s), se_matrix) - np.dot(np.real(s), ce_matrix)).T
     
     
-    # calculate I_f and S_f (14) and (15) in [4]
-    # simultaneous sampling, so C_f and S_f reduce to the total power in envelope model
-    z_matrix = np.ones([len(omegas), len(alfs)])
-    for (k, alf) in enumerate(alfs): 
-        z_matrix[:,k] *= sum(envelope[k,:] ** 2)
-
-    C_f = z_matrix.T
-    S_f = z_matrix.T
-
+        
+    # we might be able to eliminate constants.. considering that we blow them away with the normalization anyways
     # should S_r * C_i be removed for this case?
     # hbar2 is a "sufficient statistic" 
-    hbar2 = ((R_f ** 2) / C_f + (I_f ** 2) / S_f) / 2.# (19) in [4] 
-    
-    P_f = ((N * dbar2 - hbar2) ** ((2 - N) / 2.)) / np.sqrt(C_f * S_f) # (18) in [4]
-    
-    P_f /= P_f.sum() # this is probably not valid..
+    hbar2 = ((R_f ** 2) / CS_f + (I_f ** 2) / CS_f) / 2.# (19) in [4] 
+    # use logarithms to avoid underflow (** 20 will drown large probabilities..)
+    P_f = np.log10(N * dbar2 - hbar2)  * ((2 - N) / 2) - np.log10(CS_f)
+    #P_f = 10 * pow(10., P_f)
+    #P_f = ((N * dbar2 - hbar2) ** ((2 - N) / 2.)) / C_f # (18) in [4]
+     
+    #P_f /= P_f.sum() # this is probably not valid..
     
     #P_f = ne.evaluate('((N * dbar2 - hbar2) ** ((2 - N) / 2.)) / sqrt(C_f * S_f)')
     # see "Nonuniform Sampling: Bandwidth and Aliasing"
@@ -188,15 +221,15 @@ def calculate_bayes(s, t, f, alfs, env_model = 1):
     max_tuple = np.unravel_index(maxidx, P_f.shape)
 
     alf_slice = P_f[max_tuple[0],:]
-    omega_slice = P_f[:,max_tuple[1]]
+    freq_slice = P_f[:,max_tuple[1]]
 
     alf_fwhm = find_fwhm(alf_slice, max_tuple[1])
-    omega_fwhm = find_fwhm(omega_slice, max_tuple[0])
+    freq_fwhm = find_fwhm(omega_slice, max_tuple[0])
 
     fit = {}
-    fit['amplitude'] = R_f[max_tuple] / C_f[max_tuple]
+    fit['amplitude'] = R_f[max_tuple] / CS_f[max_tuple]
     fit['frequency'] = f[max_tuple[1]]
-    fit['frequency_fwhm'] = omega_fwhm
+    fit['frequency_fwhm'] = freq_fwhm 
     fit['alpha'] = alfs[max_tuple[0]]
     fit['alpha_fwhm'] = alf_fwhm
 
@@ -205,7 +238,9 @@ def calculate_bayes(s, t, f, alfs, env_model = 1):
     print 'frequency: ' + str(fit['frequency'])
     print 'frequency_fwhm: ' + str(fit['frequency_fwhm'])
     print 'amplitude: ' + str(fit['amplitude'])
-         
+
+    if (abs(fit['amplitude']) < 1e-9): 
+        pdb.set_trace()
     return fit 
 
     # calculate amplitude estimate from A_est[max] = R_est[max] / C_est[max]
@@ -234,8 +269,6 @@ if __name__ == '__main__':
     for si in range(MAX_SIGNALS):
         fit = calculate_bayes(samples, t, freqs, alfs)
         fit['index'] = si
-
-    
         samples -= fit['amplitude'] * np.exp(1j * 2 * np.pi * t * fit['frequency']) * np.exp(-t * fit['alpha'])
     
     plt.show()        

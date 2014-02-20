@@ -14,13 +14,19 @@ from libfitacf import get_badsamples, get_badlags
 from scipy.optimize import curve_fit
 import scipy.signal as signal
 
-from iterative_bayes import iterative_bayes
+from iterative_bayes import iterative_bayes, make_spacecube
 I_OFFSET = 0
 Q_OFFSET = 1
 
 DECAY_IDX = 0
 POW_IDX = 1
 DF_IDX = 2
+
+MAX_V = 1000 # m/s, max velocity to search for 
+C = 3e8
+
+ce_matrix = []
+se_matrix = []
 
 class LombFit:
     def __init__(self, record):
@@ -40,21 +46,29 @@ class LombFit:
         self.acfi = self.rawacf['acfd'][I_OFFSET::2]
         self.acfq = self.rawacf['acfd'][Q_OFFSET::2]
         self.slist = self.rawacf['slist'] 
+        self.tfreq = self.rawacf['tfreq'] # transmit frequency (kHz)
+
         # TODO: copy over pwr0, ltab, ptab, slist, nlag
         # TODO:
         #       get widththreshold and peakthreshold.. 
+            
+        # calculate max frequency either nyquist rate, or calculated off max velocity
+        fmax = (MAX_V * 2 * (self.tfreq * 1e3)) / C
+        nyquist = 1 / (2e-6 * self.t_pulse)
 
-        self.freqs = np.linspace(-1./(2e-6 * self.t_pulse), 1./(2e-6 * self.t_pulse), self.nlags * 20)
+        self.freqs = np.linspace(max(-nyquist, -fmax),min(nyquist, fmax), self.nlags * 30)
         self.maxwidth = 20
         self.widththreshold = .95 # widththreshold - statistical significance threshold for finding the extend of a peak
         self.peakthreshold = .5 # peakthreshold - statistical significance threshold for finding returns
         self.maxalf = 300
         self.alfsteps = 400
-
+        
+        # take average of smallest ten powers at range gate 0 for noise estimate
+        self.noise = np.mean(sorted(self.rawacf['pwr0'])[:10])
         self.qflg = np.zeros(self.nranges)
         self.gflg = np.zeros(self.nranges)
+        
         # initialize empty arrays for fitted parameters 
-
         self.lfits      = [[] for r in range(self.nranges)]
         self.sfits      = [[] for r in range(self.nranges)]
 
@@ -147,6 +161,7 @@ class LombFit:
         self.lfits[rgate] = iterative_bayes(samples, t, self.freqs, alfs, maxfreqs = 3, env_model = 1)
         #self.sfits[rgate] = iterative_bayes(samples, t, freqs, alfs, maxfreqs = 2, env_model = 2)
         
+
         # TODO: calculate qflg, gflg (ground and quality flags)
         self.qflg[rgate] = 0
         self.gflg[rgate] = 0
@@ -219,11 +234,13 @@ if __name__ == '__main__':
     times = dfile.times
     i = 0
     for t in times:
+        print 'processing time ' + str(t)
         if(dfile[t]['bmnum'] != 9):
             continue
         fit = LombFit(dfile[t])
-
+        i += 1
+        if i > 20:
+            break
     del dfile
 
-    pdb.set_trace()
 
