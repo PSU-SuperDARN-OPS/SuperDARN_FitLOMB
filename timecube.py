@@ -7,13 +7,19 @@
 
 # attempt at lazy property evaluation
 import numpy as np
+import pdb
+import pycuda.gpuarray as gpuarray
+import pycuda.driver as cuda
+import pycuda.autoinit
+import scikits.cuda.linalg as linalg
 
 # TimeCube is a class of cached cubes of amplitude(time, frequency, decay)
 # creating these is expensive and RAM is cheap, so...
 class TimeCube:
-    def __init__(self):
+    def __init__(self, usecuda = False):
         self.cubecache = {}
     
+        self.usecuda = usecuda
     def _cubeparam_key(self, t, f, alfs, env_model):
         # there must be better ways of doing this...
         return str(t) + self._listhash(f) + self._listhash(alfs) + str(env_model)
@@ -70,9 +76,23 @@ class TimeCube:
 
         # smash 'em together. (this is *much* faster than the above (clearer?) commented out approach)
 
-        # this is 50% of execution time, possibly do in cuda
-        ce_matrix = c_cube * envelope_cube
-        se_matrix = s_cube * envelope_cube
+        if(self.usecuda):
+            cubeshape = c_cube.shape
+
+            c_gpu = gpuarray.to_gpu(c_cube.astype(np.float32).flatten())
+            s_gpu = gpuarray.to_gpu(s_cube.astype(np.float32).flatten())
+
+            env_gpu = gpuarray.to_gpu(envelope_cube.astype(np.float32).flatten())
+
+            ce_gpu = linalg.multiply(c_gpu, env_gpu)
+            se_gpu = linalg.multiply(s_gpu, env_gpu)
+
+            ce_matrix = ce_gpu.get().reshape(cubeshape)
+            se_matrix = se_gpu.get().reshape(cubeshape)
+
+        else:
+            ce_matrix = c_cube * envelope_cube
+            se_matrix = s_cube * envelope_cube
 
         # C_f and S_f don't vary with the samples, only the envelopes
         # also.. C_f = S_f for simultaenous samples
