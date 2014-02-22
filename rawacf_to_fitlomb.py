@@ -24,7 +24,7 @@ DECAY_IDX = 0
 POW_IDX = 1
 DF_IDX = 2
 
-MAX_V = 1000 # m/s, max velocity to search for 
+MAX_V = 1500 # m/s, max velocity to search for 
 C = 3e8
 
 ce_matrix = []
@@ -148,7 +148,7 @@ class LombFit:
         #plt.show()
 
         #np.arange(0, self.nlags * self.t_pulse, self.t_pulse)[good_lags == True] / 1e6
-        
+        print 'noise: ' + str(self.noise)
         samples = i_lags + 1j * q_lags
         alfs = np.linspace(0, self.maxalf, self.alfsteps)
 
@@ -231,13 +231,16 @@ if __name__ == '__main__':
     cubecache = TimeCube()
 
     for t in times:
-        if(dfile[t]['bmnum'] != 9):
-            continue
+        #if(dfile[t]['bmnum'] != 9):
+        #    continue
         fit = LombFit(dfile[t])
         fit.ProcessPulse(cubecache)
         i += 1
-        if i > 40:
+        if i > 20:
             break
+    
+    # plot a beam
+    
     del dfile
 
 

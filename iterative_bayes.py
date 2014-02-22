@@ -17,54 +17,63 @@
 import numpy as np
 import numexpr as ne
 import matplotlib.pyplot as plt
-import scipy.signal as signal
 import pdb
 # look into numexpr
-from scipy.optimize import curve_fit
 from timecube import TimeCube
 
-PLOT = True
+PLOT = True 
 
 # jef spaleta's code..
-# TODO: modifiy for log probabilties 
-def find_fwhm(ia, pt_apex,da=1):
-      fwhm=0.0
-      if pt_apex > 0 and pt_apex < ia.size-1:
-        right_slice = ia[pt_apex:len(ia)-1:1]
-        searcher=ia[pt_apex]
-        i=0
-        for i in xrange(len(right_slice)):
-          if right_slice[i] < float(searcher)/2.:
-            break
-        i=max(1,i)
-        left_slice = ia[pt_apex:0:-1]
-        searcher=ia[pt_apex]
-        j=0
-        for j in xrange(len(left_slice)):
-          if left_slice[j] < float(searcher)/2.:
-            break
-        j=max(1,j)
-        fwhm=(i+j)*da
-      if pt_apex == 0:
-        right_slice = ia[pt_apex:len(ia)-1:1]
-        searcher=ia[pt_apex]
-        i=0
-        for i in xrange(len(right_slice)):
-          if right_slice[i] < float(searcher)/2.:
-            break
-        i=max(1,i)
-        fwhm=(2*i)*da
-      if pt_apex == ia.size-1:
-        left_slice = ia[pt_apex:0:-1]
-        searcher=ia[pt_apex]
-        j=0
-        for j in xrange(len(left_slice)):
-          if left_slice[j] < float(searcher)/2.:
-            break
-        j=max(1,j)
-        fwhm=(2*j)*da
+# modified variable "half" factor (for working with logs)
+# may be better to fit a spline
+# (see http://stackoverflow.com/questions/10582795/finding-the-full-width-half-maximum-of-a-peak)
+# however, this would assume that a spline is a good model, that approach may break with multiple peaks
+# I'm not convinced that this approach is valid for peaks near edges (near DC or high frequencies, or high or low decay rates)
 
-      return fwhm
+def find_fwhm(ia, pt_apex,log = False,factor=.5,da=1):
+  pdb.set_trace()
+  
+  if log:
+    factor = (ia[pt_apex] + log10(factor))/(ia[pt_apex])
+  
+  fwhm=0.0
+
+  if pt_apex > 0 and pt_apex < ia.size-1:
+    right_slice = ia[pt_apex:len(ia)-1:1]
+    searcher=ia[pt_apex]
+    i=0
+    for i in xrange(len(right_slice)):
+      if right_slice[i] < float(searcher)*factor:
+        break
+    i=max(1,i)
+    left_slice = ia[pt_apex:0:-1]
+    searcher=ia[pt_apex]
+    j=0
+    for j in xrange(len(left_slice)):
+      if left_slice[j] < float(searcher)*factor:
+        break
+    j=max(1,j)
+    fwhm=(i+j)*da
+  if pt_apex == 0:
+    right_slice = ia[pt_apex:len(ia)-1:1]
+    searcher=ia[pt_apex]
+    i=0
+    for i in xrange(len(right_slice)):
+      if right_slice[i] < float(searcher)*factor:
+        break
+    i=max(1,i)
+    fwhm=(2*i)*da
+  if pt_apex == ia.size-1:
+    left_slice = ia[pt_apex:0:-1]
+    searcher=ia[pt_apex]
+    j=0
+    for j in xrange(len(left_slice)):
+      if left_slice[j] < float(searcher)*factor:
+        break
+    j=max(1,j)
+    fwhm=(2*j)*da
+
+  return fwhm
 
 # returns an array of indexes of input array
 # for items in array centered on centeridx which are True
@@ -145,6 +154,7 @@ def calculate_bayes(s, t, f, alfs, cubecache, env_model = 1):
     
     # about 10% of execution time spent here, do this on grapics card?
     # see http://lebedov.github.io/scikits.cuda/generated/scikits.cuda.linalg.dot.html
+
     R_f = (np.dot(np.real(s), ce_matrix) + np.dot(np.imag(s), se_matrix)).T
     I_f = (np.dot(np.real(s), se_matrix) - np.dot(np.real(s), ce_matrix)).T
     
@@ -192,7 +202,7 @@ def calculate_bayes(s, t, f, alfs, cubecache, env_model = 1):
     print 'frequency_fwhm: ' + str(fit['frequency_fwhm'])
     print 'amplitude: ' + str(fit['amplitude'])
 
-    if (abs(fit['amplitude']) < 1e-9): 
+    if (abs(fit['amplitude']) < 1e-9):
         pdb.set_trace()
     return fit 
 

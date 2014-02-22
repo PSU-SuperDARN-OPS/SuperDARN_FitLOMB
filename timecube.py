@@ -12,14 +12,19 @@ import pycuda.gpuarray as gpuarray
 import pycuda.driver as cuda
 import pycuda.autoinit
 import scikits.cuda.linalg as linalg
+import datetime
 
 # TimeCube is a class of cached cubes of amplitude(time, frequency, decay)
 # creating these is expensive and RAM is cheap, so...
+
+MAX_CUBES = 20 # these are ~100mb each..
 class TimeCube:
-    def __init__(self, usecuda = False):
+    def __init__(self, usecuda = False, maxsize = 20):
         self.cubecache = {}
-    
+        self.cubetimes = {}
+        self.maxsize = maxsize
         self.usecuda = usecuda
+
     def _cubeparam_key(self, t, f, alfs, env_model):
         # there must be better ways of doing this...
         return str(t) + self._listhash(f) + self._listhash(alfs) + str(env_model)
@@ -32,7 +37,14 @@ class TimeCube:
         key = self._cubeparam_key(t,f,alfs,env_model) 
 
         if not key in self.cubecache:
-            self.cubecache[key] = self._make_spacecube(t, f, alfs, env_model)    
+            self.cubecache[key] = self._make_spacecube(t, f, alfs, env_model)
+            
+            # check to see if cube cache is too big. it is, delete the least recently used cube
+            self.cubetimes[datetime.datetime.now()] = key 
+            if len(self.cubecache) > self.maxsize:
+                del self.cubecache[min(self.cubetimes.keys())]
+        else:
+            self.cubetimes
 
         return self.cubecache[key] 
 
