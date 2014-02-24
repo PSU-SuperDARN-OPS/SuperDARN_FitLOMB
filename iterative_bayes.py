@@ -21,7 +21,7 @@ import pdb
 # look into numexpr
 from timecube import TimeCube
 
-PLOT = True 
+VERBOSE = True 
 
 # jef spaleta's code..
 # modified variable "half" factor (for working with logs)
@@ -110,33 +110,14 @@ def iterative_bayes(samples, t, freqs, alfs, cubecache, maxfreqs = 4, fmax = 4e3
     fits = []
     for i in range(maxfreqs):
         fit = calculate_bayes(samples, t, freqs, alfs, cubecache, env_model = 1)
-        fitsignal = fit['amplitude'] * np.exp(1j * 2 * np.pi * fit['frequency'] * t) * np.exp(-fit['alpha'] * t)
-
         fits.append(fit)
-        if (PLOT):
-            plt.subplot(maxfreqs,1,i+1)
-            plt.plot(t,np.real(samples),'-.',color='r',linewidth=3)
-            plt.plot(t,np.imag(samples),'-.',color='b',linewidth=3)
-            plt.plot(t,np.real(fitsignal),color='r',linewidth=3)
-            plt.plot(t,np.imag(fitsignal),color='b',linewidth=3)
-            plt.grid(True)
+        samples -= fit['signal']
 
-            txfreq = 10.7e6
-            vel = (fit['frequency'] * 3e8) / (2 * txfreq)
-            plt.title('pass ' + str(i) + ' velocity (m/s): ' + str(vel) + 'freq fwhm: ' + str(fit['frequency_fwhm']))
-            plt.legend(['I samples', 'Q samples', 'I fit', 'Q fit'])
-            plt.xlabel('time (seconds)')
-            plt.ylabel('amplitude')
-
-            samples -= fitsignal
-    if (PLOT):
-        plt.show()
     return fits
 
-# kernprof -l foo.py
+# to profile:
+# kernprof.py -l foo.py
 # python -m line_profiler foo.py.lprof
-
-#@profile
 def calculate_bayes(s, t, f, alfs, cubecache, env_model = 1):
     N = len(t) * 2# see equation (10) in [4]
     m = 2
@@ -144,39 +125,33 @@ def calculate_bayes(s, t, f, alfs, cubecache, env_model = 1):
     
     ce_matrix, se_matrix, CS_f = cubecache.get_spacecube(t, f, alfs, env_model)
 
-    # create R_f and C_f (12) and (13) in [4]
+    # create R_f and I_f (12) and (13) in [4]
     # these reduce to the real and complex parts of the fourier transform for uniformly sampled data
     # matricies, len(freqs) by len(samples)
     # omegas * times * alphas
     # TODO: [12] has real - imag, but jef has real + imag. only jef's way works.. why?
-    
-    # about 10% of execution time spent here, do this on grapics card?
-    # see http://lebedov.github.io/scikits.cuda/generated/scikits.cuda.linalg.dot.html
-
+    # these lines are ~20% of execution time each
     R_f = (np.dot(np.real(s), ce_matrix) + np.dot(np.imag(s), se_matrix)).T
     I_f = (np.dot(np.real(s), se_matrix) - np.dot(np.real(s), ce_matrix)).T
     
     # we might be able to eliminate constants.. considering that we blow them away with the normalization anyways
-    # should S_r * C_i be removed for this case?
     # hbar2 is a "sufficient statistic" 
+    # % about 7% of execution time is spent here
     hbar2 = ((R_f ** 2) / CS_f + (I_f ** 2) / CS_f) / 2.# (19) in [4] 
         
     # use logarithms to avoid underflow (** 20 will drown large probabilities..)
+    # about 22% of execution time is spent here
     P_f = np.log10(N * dbar2 - hbar2)  * ((2 - N) / 2) - np.log10(CS_f)
-   
+#    P_f = ne.evaluate('log10((N * dbar2 - hbar2) ** ((2 - N) / 2.)) - log10(CS_f)') # (it takes a little longer to use numexpr..)
+
     # don't bother de-logging, we don't use this anyways.
-    # fix fwhm functions to accept log probabilities
     #P_f = 10 * pow(10., P_f)
     #P_f = ((N * dbar2 - hbar2) ** ((2 - N) / 2.)) / C_f # (18) in [4]
     #P_f /= P_f.sum() # this is probably not valid..
     
-    #P_f = ne.evaluate('((N * dbar2 - hbar2) ** ((2 - N) / 2.)) / sqrt(C_f * S_f)')
     # see "Nonuniform Sampling: Bandwidth and Aliasing"
-    # for <sigma**2> and P(f|DI)
-
-    #sigma2 = (N * dbar2 - hbar2) / (N - 4.)
-    #prob_f = np.exp(hbar2 / (2. * sigma2))
-
+    # for <sigma**2>
+    #sigma2 = (N * dbar2 - hbar2) / (N - 4.) # ???
 
     maxidx = np.argmax(P_f)
     max_tuple = np.unravel_index(maxidx, P_f.shape)
@@ -193,20 +168,25 @@ def calculate_bayes(s, t, f, alfs, cubecache, env_model = 1):
     fit['frequency_fwhm'] = freq_fwhm 
     fit['alpha'] = alfs[max_tuple[0]]
     fit['alpha_fwhm'] = alf_fwhm
+    fit['samples'] = s.copy()
+    fit['t'] = t.copy()
+    fit['signal'] = fit['amplitude'] * np.exp(1j * 2 * np.pi * fit['frequency'] * t) * np.exp(-fit['alpha'] * t)
+    
+    if(VERBOSE):
+        print 'alf: ' + str(fit['alpha'])
+        print 'alf_fwhm: ' + str(fit['alpha_fwhm'])
+        print 'frequency: ' + str(fit['frequency'])
+        print 'frequency_fwhm: ' + str(fit['frequency_fwhm'])
+        print 'amplitude: ' + str(fit['amplitude'])
 
-    print 'alf: ' + str(fit['alpha'])
-    print 'alf_fwhm: ' + str(fit['alpha_fwhm'])
-    print 'frequency: ' + str(fit['frequency'])
-    print 'frequency_fwhm: ' + str(fit['frequency_fwhm'])
-    print 'amplitude: ' + str(fit['amplitude'])
-
-    if (abs(fit['amplitude']) < 1e-9):
+    if abs(fit['amplitude']) < 1e-9:
+        print 'something went wrong with the fit.. dropping into debug mode'
         pdb.set_trace()
+
     return fit 
 
     # calculate amplitude estimate from A_est[max] = R_est[max] / C_est[max]
     # B_est from  I_est[max] / S_est[max] (what is it?)
-    # SNR from ...
 
 if __name__ == '__main__':
     fs = 1. 
