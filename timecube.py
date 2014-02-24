@@ -8,10 +8,10 @@
 # attempt at lazy property evaluation
 import numpy as np
 import pdb
-import pycuda.gpuarray as gpuarray
-import pycuda.driver as cuda
-import pycuda.autoinit
-import scikits.cuda.linalg as linalg
+#import pycuda.gpuarray as gpuarray
+#import pycuda.driver as cuda
+#import pycuda.autoinit
+#import scikits.cuda.linalg as linalg
 import datetime
 
 # TimeCube is a class of cached cubes of amplitude(time, frequency, decay)

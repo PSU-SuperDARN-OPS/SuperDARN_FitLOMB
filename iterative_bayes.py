@@ -30,11 +30,9 @@ PLOT = True
 # however, this would assume that a spline is a good model, that approach may break with multiple peaks
 # I'm not convinced that this approach is valid for peaks near edges (near DC or high frequencies, or high or low decay rates)
 
-def find_fwhm(ia, pt_apex,log = False,factor=.5,da=1):
-  pdb.set_trace()
-  
+def find_fwhm(ia, pt_apex,log = True,factor=.5,da=1):
   if log:
-    factor = (ia[pt_apex] + log10(factor))/(ia[pt_apex])
+    factor = (ia[pt_apex] + np.log10(factor))/(ia[pt_apex])
   
   fwhm=0.0
 
@@ -125,7 +123,7 @@ def iterative_bayes(samples, t, freqs, alfs, cubecache, maxfreqs = 4, fmax = 4e3
 
             txfreq = 10.7e6
             vel = (fit['frequency'] * 3e8) / (2 * txfreq)
-            plt.title('pass ' + str(i) + ' samples and fit, velocity (m/s): ' + str(vel))
+            plt.title('pass ' + str(i) + ' velocity (m/s): ' + str(vel) + 'freq fwhm: ' + str(fit['frequency_fwhm']))
             plt.legend(['I samples', 'Q samples', 'I fit', 'Q fit'])
             plt.xlabel('time (seconds)')
             plt.ylabel('amplitude')

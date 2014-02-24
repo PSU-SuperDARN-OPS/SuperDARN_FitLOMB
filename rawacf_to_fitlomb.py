@@ -2,7 +2,6 @@
 # mit license
 import argparse
 import pdb
-import h5py
 
 from sd_data_tools import *
 from pydmap import DMapFile, timespan, dt2ts, ts2dt
@@ -223,7 +222,7 @@ if __name__ == '__main__':
     
     args = parser.parse_args() 
     # on 3/20/2013, 8 AM UTC
-    infile = '20130320.0801.00.mcm.a.rawacf'
+    infile = '20130320.0801.00.mcm.a.rawacf'#'20130320.0801.00.mcm.a.rawacf'
     dfile = DMapFile(files=[infile])
 
     times = dfile.times
