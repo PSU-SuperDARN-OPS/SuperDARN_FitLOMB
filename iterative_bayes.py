@@ -11,18 +11,11 @@
 
 import numpy as np
 import numexpr as ne
-import matplotlib.pyplot as plt
 import pdb
 # look into numexpr
-from timecube import TimeCube
-import pp
+from timecube import TimeCube, make_spacecube
 
 VERBOSE = False 
-VEL_CMAP = plt.cm.PuOr
-FREQ_CMAP = plt.cm.spectral
-NOISE_CMAP = plt.cm.autumn
-SPECW_CMAP = plt.cm.hsv
-POWER_CMAP = plt.cm.jet
 
 # jef spaleta's code..
 # modified variable "half" factor (for working with logs)
@@ -74,28 +67,6 @@ def find_fwhm(ia, pt_apex,log = True,factor=.5,da=1):
 
   return fwhm
 
-# returns an array of indexes of input array
-# for items in array centered on centeridx which are True
-# this is probably not a pythonic approach.. see image segmentation?
-def get_segment(array, centeridx):
-    if not array[centeridx] == True:
-        raise ValueError('Specified center index of array in get_segment is False!')
-
-    segmentidxs = [centeridx]
-
-    _t = centeridx - 1
-    while array[_t] and _t >= 0:
-        segmentidxs = [_t] + segmentidxs
-        _t -= 1
-        
-
-    _t = centeridx + 1
-    while array[_t] and _t < len(array):
-        segmentidxs = segmentidxs + [_t]
-        _t += 1
-
-    return np.array(segmentidxs)
-
 # calcuates the peak frequency component using bayesian analysis given complex samples, an envelope model, and sample times
 # returns model parameters?
 # s - samples (complex numbers)
@@ -107,25 +78,37 @@ def get_segment(array, centeridx):
 # returns fit, with model parameters, a frequency, and a significance
 # for simultaneous complex samples, normalized frequency, ts normalized to 1s
 #@profile
-def iterative_bayes(samples, t, freqs, alfs, cubecache, maxfreqs = 4, fmax = 4e3, env_model = 1):
+def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = False):
     fits = []
+    cubecache = False
+    if not cubecache:
+        timecube = (make_spacecube(t, freqs, alfs, env_model))
+    else:
+        timecube = False
+
     for i in range(maxfreqs):
-        fit = calculate_bayes(samples, t, freqs, alfs, cubecache, env_model = 1)
+        fit = calculate_bayes(samples, t, freqs, alfs, env_model, cubecache = cubecache, timecube = timecube)
         fits.append(fit)
         samples -= fit['signal']
-
     return fits
 
 # to profile:
 # kernprof.py -l foo.py
 # python -m line_profiler foo.py.lprof
 #@profile
-def calculate_bayes(s, t, f, alfs, cubecache, env_model = 1):
+def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = False):
     N = len(t) * 2# see equation (10) in [4]
     m = 2
+
     dbar2 = (sum(np.real(s) ** 2) + sum(np.imag(s) ** 2)) / (N) # (11) in [4] 
     
-    ce_matrix, se_matrix, CS_f = cubecache.get_spacecube(t, f, alfs, env_model)
+    # reuse time x alphas x frequency cube if possible, this is time consuming to construct
+    if cubecache:
+        ce_matrix, se_matrix, CS_f = cubecache.get_spacecube(t, f, alfs, env_model) 
+    elif timecube:
+        ce_matrix, se_matrix, CS_f = timecube 
+    else:
+        ce_matrix, se_matrix, CS_f = make_spacecube(t, freqs, alfs, env_model)
 
     # create R_f and I_f (12) and (13) in [4]
     # these reduce to the real and complex parts of the fourier transform for uniformly sampled data
@@ -174,17 +157,6 @@ def calculate_bayes(s, t, f, alfs, cubecache, env_model = 1):
     fit['t'] = t.copy()
     fit['signal'] = fit['amplitude'] * np.exp(1j * 2 * np.pi * fit['frequency'] * t) * np.exp(-fit['alpha'] * t)
     
-    if(VERBOSE):
-        print 'alf: ' + str(fit['alpha'])
-        print 'alf_fwhm: ' + str(fit['alpha_fwhm'])
-        print 'frequency: ' + str(fit['frequency'])
-        print 'frequency_fwhm: ' + str(fit['frequency_fwhm'])
-        print 'amplitude: ' + str(fit['amplitude'])
-
-    if abs(fit['amplitude']) < 1e-9:
-        print 'something went wrong with the fit.. dropping into debug mode'
-        #pdb.set_trace()
-
     return fit 
 
     # calculate amplitude estimate from A_est[max] = R_est[max] / C_est[max]
@@ -214,4 +186,3 @@ if __name__ == '__main__':
         fit['index'] = si
         samples -= fit['amplitude'] * np.exp(1j * 2 * np.pi * t * fit['frequency']) * np.exp(-t * fit['alpha'])
     
-    plt.show()        

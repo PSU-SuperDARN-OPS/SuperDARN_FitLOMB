@@ -7,7 +7,7 @@
 
 # attempt at lazy property evaluation
 import numpy as np
-import pdb
+#import pdb
 #import pycuda.gpuarray as gpuarray
 #import pycuda.driver as cuda
 #import pycuda.autoinit
@@ -43,7 +43,7 @@ class TimeCube:
         key = self._cubeparam_key(t,f,alfs,env_model) 
 
         if not key in self.cubecache:
-            self.cubecache[key] = self._make_spacecube(t, f, alfs, env_model)
+            self.cubecache[key] = make_spacecube(t, f, alfs, env_model)
             
             # check to see if cube cache is too big. it is, delete the least recently used cube
             self.cubetimes[datetime.datetime.now()] = key 
@@ -55,83 +55,82 @@ class TimeCube:
 
         return self.cubecache[key] 
 
-    def _make_spacecube(self, t, f, alfs, env_model):
-        print 'computing a spacecube..'
-        # create ce_matrix and se_matrix..
-        # sin and cos(w * t) * exp(-alf * t) cubes
+def make_spacecube(t, f, alfs, env_model):
+    # create ce_matrix and se_matrix..
+    # sin and cos(w * t) * exp(-alf * t) cubes
 
-        omegas = 2 * np.pi * f
-        c_matrix = np.cos(np.outer(omegas, t))
-        s_matrix = np.sin(np.outer(omegas, t))
+    omegas = 2 * np.pi * f
+    c_matrix = np.cos(np.outer(omegas, t))
+    s_matrix = np.sin(np.outer(omegas, t))
 
-        # create cube of time by frequency with no decay
-        c_cube = np.tile(c_matrix, (len(alfs),1,1))
-        s_cube = np.tile(s_matrix, (len(alfs),1,1))
+    # create cube of time by frequency with no decay
+    c_cube = np.tile(c_matrix, (len(alfs),1,1))
+    s_cube = np.tile(s_matrix, (len(alfs),1,1))
 
-        #ce_matrix = np.zeros([len(omegas), len(t), len(alfs)])
-        #se_matrix = np.zeros([len(omegas), len(t), len(alfs)])
+    #ce_matrix = np.zeros([len(omegas), len(t), len(alfs)])
+    #se_matrix = np.zeros([len(omegas), len(t), len(alfs)])
 
-        # about 80% of execution time spent here..
-        # ~ 400000
-        # kernprof.py -l iterative_bayes.py
-        # python -m line_profiler iterative_bayes.py.lprof
+    # about 80% of execution time spent here..
+    # ~ 400000
+    # kernprof.py -l iterative_bayes.py
+    # python -m line_profiler iterative_bayes.py.lprof
 
-        # so... create cube of alpha by time at dc 
-        envelope = np.exp(np.outer(-(alfs ** env_model), t))
-        envelope_cube = np.tile(envelope, (len(c_matrix), 1,1))
+    # so... create cube of alpha by time at dc 
+    envelope = np.exp(np.outer(-(alfs ** env_model), t))
+    envelope_cube = np.tile(envelope, (len(c_matrix), 1,1))
 
-        # rearrange cubes to match format of ce_matrix and se_matrix
-        envelope_cube = np.swapaxes(envelope_cube, 1, 2)
-        c_cube = np.swapaxes(c_cube, 0, 1)
-        c_cube = np.swapaxes(c_cube, 1, 2)
-        s_cube = np.swapaxes(s_cube, 0, 1)
-        s_cube = np.swapaxes(s_cube, 1, 2)
+    # rearrange cubes to match format of ce_matrix and se_matrix
+    envelope_cube = np.swapaxes(envelope_cube, 1, 2)
+    c_cube = np.swapaxes(c_cube, 0, 1)
+    c_cube = np.swapaxes(c_cube, 1, 2)
+    s_cube = np.swapaxes(s_cube, 0, 1)
+    s_cube = np.swapaxes(s_cube, 1, 2)
 
-        #for (k, alf) in enumerate(alfs):
-        #    for (j, ti) in enumerate(t):
-        #        ce_matrix[:,j,k] = c_matrix[:,j] * envelope[k, j] 
-        #        se_matrix[:,j,k] = s_matrix[:,j] * envelope[k, j] 
+    #for (k, alf) in enumerate(alfs):
+    #    for (j, ti) in enumerate(t):
+    #        ce_matrix[:,j,k] = c_matrix[:,j] * envelope[k, j] 
+    #        se_matrix[:,j,k] = s_matrix[:,j] * envelope[k, j] 
 
-        # smash 'em together. (this is *much* faster than the above (clearer?) commented out approach)
+    # smash 'em together. (this is *much* faster than the above (clearer?) commented out approach)
+    
+    # cuda path works, but it is ~twice as slow due to the time it takes to copy arrays to the gpu
+    # this could be improved by not using kernels, and writing longer cuda functions
+    # comparing i7-4700 with a nvidia 750M
+    
+    #if(self.usecuda):
+    #    cubeshape = c_cube.shape
+    #    c_gpu = gpuarray.to_gpu(c_cube.flatten())
+    #    s_gpu = gpuarray.to_gpu(s_cube.flatten())
+    #    
+    #    ce_gpu = gpuarray.zeros(cubeshape[0] * cubeshape[1] * cubeshape[2], dtype='float64')
+    #    se_gpu = gpuarray.zeros(cubeshape[0] * cubeshape[1] * cubeshape[2], dtype='float64')
+
+    #    env_gpu = gpuarray.to_gpu(envelope_cube.flatten())
+
+    #    self.element_mul(c_gpu, env_gpu, ce_gpu)
+    #    self.element_mul(s_gpu, env_gpu, se_gpu)
         
-        # cuda path works, but it is ~twice as slow due to the time it takes to copy arrays to the gpu
-        # this could be improved by not using kernels, and writing longer cuda functions
-        # comparing i7-4700 with a nvidia 750M
-        
-        #if(self.usecuda):
-        #    cubeshape = c_cube.shape
-        #    c_gpu = gpuarray.to_gpu(c_cube.flatten())
-        #    s_gpu = gpuarray.to_gpu(s_cube.flatten())
-        #    
-        #    ce_gpu = gpuarray.zeros(cubeshape[0] * cubeshape[1] * cubeshape[2], dtype='float64')
-        #    se_gpu = gpuarray.zeros(cubeshape[0] * cubeshape[1] * cubeshape[2], dtype='float64')
+    #    ce_matrix = ce_gpu.get().reshape(cubeshape)
+    #    se_matrix = se_gpu.get().reshape(cubeshape)
 
-        #    env_gpu = gpuarray.to_gpu(envelope_cube.flatten())
+    #else: 
 
-        #    self.element_mul(c_gpu, env_gpu, ce_gpu)
-        #    self.element_mul(s_gpu, env_gpu, se_gpu)
-            
-        #    ce_matrix = ce_gpu.get().reshape(cubeshape)
-        #    se_matrix = se_gpu.get().reshape(cubeshape)
+    ce_matrix = c_cube * envelope_cube
+    se_matrix = s_cube * envelope_cube
 
-        #else: 
+    # C_f and S_f don't vary with the samples, only the envelopes
+    # also.. C_f = S_f for simultaenous samples
+    # so, lets only calculate this once per set of alpha/frequency/timespan
 
-        ce_matrix = c_cube * envelope_cube
-        se_matrix = s_cube * envelope_cube
+    # calculate C_f and S_f (14) and (15) in [4]
+    # simultaneous sampling, so C_f and S_f reduce to the total power in envelope model
+    z_matrix = np.ones([len(omegas), len(alfs)])
+    for (k, alf) in enumerate(alfs):
+        z_matrix[:,k] *= sum(envelope[k,:] ** 2)
 
-        # C_f and S_f don't vary with the samples, only the envelopes
-        # also.. C_f = S_f for simultaenous samples
-        # so, lets only calculate this once per set of alpha/frequency/timespan
+    CS_f = z_matrix.T
 
-        # calculate C_f and S_f (14) and (15) in [4]
-        # simultaneous sampling, so C_f and S_f reduce to the total power in envelope model
-        z_matrix = np.ones([len(omegas), len(alfs)])
-        for (k, alf) in enumerate(alfs):
-            z_matrix[:,k] *= sum(envelope[k,:] ** 2)
-
-        CS_f = z_matrix.T
-
-        return ce_matrix, se_matrix, CS_f
+    return ce_matrix, se_matrix, CS_f
 
 # https://stackoverflow.com/questions/13031439/element-wise-function-on-pycudacomplex-array
 # need to use complex 1d array

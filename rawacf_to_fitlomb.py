@@ -8,7 +8,7 @@ from sd_data_tools import *
 from pydmap import DMapFile, timespan, dt2ts, ts2dt
 from complex_lomb import *
 
-from timecube import TimeCube
+from timecube import TimeCube, make_spacecube
 
 import datetime
 import numpy as np
@@ -18,8 +18,10 @@ import matplotlib.dates as dates
 from libfitacf import get_badsamples, get_badlags
 from scipy.optimize import curve_fit
 import scipy.signal as signal
+import pp
 
-from iterative_bayes import iterative_bayes
+from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes
+
 I_OFFSET = 0
 Q_OFFSET = 1
 
@@ -73,7 +75,8 @@ class LombFit:
         self.maxalf = 300
         self.alfsteps = 400
         self.maxfreqs = 3
-        
+        self.alfs = np.linspace(0, self.maxalf, self.alfsteps)
+
         # thresholds on velocity and spectral width for surface scatter flag (m/s)
         self.vss_thresh = 40
         self.wss_thresh = 40
@@ -133,9 +136,38 @@ class LombFit:
         for r in self.ranges:
             peaks = self.CalculatePeaks(r, cubecache)
         self.ProcessPeaks()
+    
+    # TODO: work with non-lambda env models
+    def ParallelProcessPulse(self):
+        # create pp job server
+        job_server = pp.Server()
 
-    # finds returns in spectrum and records cell velocity
-    def CalculatePeaks(self, rgate, cubecache):
+        # prepare sample and time arrays 
+        times_samples = [(self._CalcSamples(r)) for r in self.ranges]
+        
+        jobs = []
+        
+        # dispatch jobs
+        libs = ("numpy as np", "numexpr as ne", "timecube", "iterative_bayes")
+        funcs = (make_spacecube, find_fwhm, calculate_bayes)
+
+        for r in self.ranges:
+            args = (times_samples[r][1], times_samples[r][0], self.freqs, self.alfs, 1, self.maxfreqs)
+            jobs.append(job_server.submit(iterative_bayes, args, funcs, libs))
+        
+        # wait for jobs to complete
+        job_server.wait() 
+        
+        for (rgate, job) in enumerate(jobs):
+            try:
+                self.lfits[rgate] = job()
+            except:
+                pdb.set_trace()
+         
+        self.ProcessPeaks()
+
+    # get time and good complex samples for a range gate
+    def _CalcSamples(self, rgate):
         offset = self.nlags * rgate
         # acfd is mplgs * nrang
         # see http://davit.ece.vt.edu/davitpy/_modules/pydarn/sdio/radDataTypes.html
@@ -155,10 +187,15 @@ class LombFit:
 
         #np.arange(0, self.nlags * self.t_pulse, self.t_pulse)[good_lags == True] / 1e6
         samples = i_lags + 1j * q_lags
-        alfs = np.linspace(0, self.maxalf, self.alfsteps)
-        
+        return t, samples
+
+
+    # finds returns in spectrum and records cell velocity
+    def CalculatePeaks(self, rgate, cubecache, env_model = 1):
+        t, samples = self._CalcSamples(rgate)
+
         # calcuate generalized lomb-scargle periodogram iteratively
-        self.lfits[rgate] = iterative_bayes(samples, t, self.freqs, alfs, cubecache, maxfreqs = self.maxfreqs, env_model = 1)
+        self.lfits[rgate] = iterative_bayes(samples, t, self.freqs, self.alfs, env_model, self.maxfreqs, cubecache = cubecache)
         #self.sfits[rgate] = iterative_bayes(samples, t, freqs, alfs, maxfreqs = 2, env_model = 2)
         
     def ProcessPeaks(self):
@@ -309,7 +346,8 @@ if __name__ == '__main__':
         print i
         print 'processing time ' + str(t)
         fit = LombFit(dfile[t])
-        fit.ProcessPulse(cubecache)
+
+        fit.ParallelProcessPulse()
         lombfits.append(fit)
     
     PlotRTI(lombfits, 9)
