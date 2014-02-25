@@ -21,7 +21,12 @@ import pdb
 # look into numexpr
 from timecube import TimeCube
 
-VERBOSE = True 
+VERBOSE = False 
+VEL_CMAP = plt.cm.PuOr
+FREQ_CMAP = plt.cm.spectral
+NOISE_CMAP = plt.cm.autumn
+SPECW_CMAP = plt.cm.hsv
+POWER_CMAP = plt.cm.jet
 
 # jef spaleta's code..
 # modified variable "half" factor (for working with logs)
@@ -118,6 +123,7 @@ def iterative_bayes(samples, t, freqs, alfs, cubecache, maxfreqs = 4, fmax = 4e3
 # to profile:
 # kernprof.py -l foo.py
 # python -m line_profiler foo.py.lprof
+#@profile
 def calculate_bayes(s, t, f, alfs, cubecache, env_model = 1):
     N = len(t) * 2# see equation (10) in [4]
     m = 2
@@ -130,17 +136,17 @@ def calculate_bayes(s, t, f, alfs, cubecache, env_model = 1):
     # matricies, len(freqs) by len(samples)
     # omegas * times * alphas
     # TODO: [12] has real - imag, but jef has real + imag. only jef's way works.. why?
-    # these lines are ~20% of execution time each
+    # about 50% of execution time is spent here
     R_f = (np.dot(np.real(s), ce_matrix) + np.dot(np.imag(s), se_matrix)).T
     I_f = (np.dot(np.real(s), se_matrix) - np.dot(np.real(s), ce_matrix)).T
     
     # we might be able to eliminate constants.. considering that we blow them away with the normalization anyways
     # hbar2 is a "sufficient statistic" 
-    # % about 7% of execution time is spent here
-    hbar2 = ((R_f ** 2) / CS_f + (I_f ** 2) / CS_f) / 2.# (19) in [4] 
-        
+    # execution time halved by using numexpr, about 5% of execution time is spent here
+    hbar2 = ne.evaluate('((R_f ** 2) / CS_f + (I_f ** 2) / CS_f) / 2.')# (19) in [4] 
+    
     # use logarithms to avoid underflow (** 20 will drown large probabilities..)
-    # about 22% of execution time is spent here
+    # about 30% of execution time is spent here
     P_f = np.log10(N * dbar2 - hbar2)  * ((2 - N) / 2) - np.log10(CS_f)
 #    P_f = ne.evaluate('log10((N * dbar2 - hbar2) ** ((2 - N) / 2.)) - log10(CS_f)') # (it takes a little longer to use numexpr..)
 
@@ -181,7 +187,7 @@ def calculate_bayes(s, t, f, alfs, cubecache, env_model = 1):
 
     if abs(fit['amplitude']) < 1e-9:
         print 'something went wrong with the fit.. dropping into debug mode'
-        pdb.set_trace()
+        #pdb.set_trace()
 
     return fit 
 

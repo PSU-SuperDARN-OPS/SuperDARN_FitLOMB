@@ -1,4 +1,5 @@
-# jon klein, jtklein@alaska.edu
+# jon klein, jtklein@alaska.
+
 # mit license
 import argparse
 import pdb
@@ -12,6 +13,7 @@ from timecube import TimeCube
 import datetime
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.dates as dates
 
 from libfitacf import get_badsamples, get_badlags
 from scipy.optimize import curve_fit
@@ -27,6 +29,12 @@ DF_IDX = 2
 
 MAX_V = 1500 # m/s, max velocity to search for 
 C = 3e8
+
+VEL_CMAP = plt.cm.PuOr
+FREQ_CMAP = plt.cm.spectral
+NOISE_CMAP = plt.cm.autumn
+SPECW_CMAP = plt.cm.hsv
+POWER_CMAP = plt.cm.jet
 
 class LombFit:
     def __init__(self, record):
@@ -47,9 +55,9 @@ class LombFit:
         self.acfq = self.rawacf['acfd'][Q_OFFSET::2]
         self.slist = self.rawacf['slist'] 
         self.tfreq = self.rawacf['tfreq'] # transmit frequency (kHz)
-        
+        self.bmnum = self.rawacf['bmnum'] # beam number
         self.recordtime = datetime.datetime(self.rawacf['time.yr'], self.rawacf['time.mo'], self.rawacf['time.dy'], self.rawacf['time.hr'], self.rawacf['time.mt'], self.rawacf['time.sc'], self.rawacf['time.us']) 
-        pdb.set_trace()
+        
         # TODO: copy over pwr0, ltab, ptab, slist, nlag
         # TODO:
         #       get widththreshold and peakthreshold.. 
@@ -58,41 +66,61 @@ class LombFit:
         fmax = (MAX_V * 2 * (self.tfreq * 1e3)) / C
         nyquist = 1 / (2e-6 * self.t_pulse)
 
-        self.freqs = np.linspace(max(-nyquist, -fmax),min(nyquist, fmax), self.nlags * 30)
+        self.freqs = np.linspace(max(-nyquist, -fmax),min(nyquist, fmax), self.nlags * 20)
         self.maxwidth = 20
         self.widththreshold = .95 # widththreshold - statistical significance threshold for finding the extend of a peak
         self.peakthreshold = .5 # peakthreshold - statistical significance threshold for finding returns
         self.maxalf = 300
         self.alfsteps = 400
+        self.maxfreqs = 3
         
+        # thresholds on velocity and spectral width for surface scatter flag (m/s)
+        self.vss_thresh = 40
+        self.wss_thresh = 40
+        
+        # threshold on power (snr), spectral width fwhm, and velocity fwhm for quality flag
+        self.qwle_thresh = 50
+        self.qvle_thresh = 50
+        self.qpwr_thresh = 2
+    
+        # thresholds on velocity and spectral width for ionospheric scatter flag (m/s)
+        self.wimin_thresh = 100
+        self.wimax_thresh = 1500
+        self.vimax_thresh = 100
+        self.vimin_thresh = 1000
+
         # take average of smallest ten powers at range gate 0 for noise estimate
         self.noise = np.mean(sorted(self.rawacf['pwr0'])[:10])
-        self.qflg = np.zeros(self.nranges)
-        self.gflg = np.zeros(self.nranges)
         
         # initialize empty arrays for fitted parameters 
-        self.lfits      = [[] for r in range(self.nranges)]
-        self.sfits      = [[] for r in range(self.nranges)]
+        self.lfits      = [[] for r in self.ranges]
+        self.sfits      = [[] for r in self.ranges]
 
-        self.v          = [[] for r in range(self.nranges)]
-        self.v_e        = [[] for r in range(self.nranges)]
+        self.v          = np.zeros([self.nranges, self.maxfreqs])
+        self.v_e        = np.zeros([self.nranges, self.maxfreqs])
  
-        self.sd_s       = [[] for r in range(self.nranges)]
-        self.w_s_e      = [[] for r in range(self.nranges)]
-        self.w_s        = [[] for r in range(self.nranges)]
-        self.p_s        = [[] for r in range(self.nranges)]
-        self.p_s_e      = [[] for r in range(self.nranges)]
-        self.v_s        = [[] for r in range(self.nranges)]
-        self.v_s_e      = [[] for r in range(self.nranges)]
+        self.sd_s       = np.zeros([self.nranges, self.maxfreqs])
+        self.w_s_e      = np.zeros([self.nranges, self.maxfreqs])
+        self.w_s        = np.zeros([self.nranges, self.maxfreqs])
+        self.p_s        = np.zeros([self.nranges, self.maxfreqs])
+        self.p_s_e      = np.zeros([self.nranges, self.maxfreqs])
+        self.v_s        = np.zeros([self.nranges, self.maxfreqs])
+        self.v_s_e      = np.zeros([self.nranges, self.maxfreqs])
 
-        self.sd_l       = [[] for r in range(self.nranges)]
-        self.w_l_e      = [[] for r in range(self.nranges)]
-        self.w_l        = [[] for r in range(self.nranges)]
-        self.p_l        = [[] for r in range(self.nranges)]
-        self.p_l_e      = [[] for r in range(self.nranges)]
-        self.v_l        = [[] for r in range(self.nranges)]
-        self.v_l_e      = [[] for r in range(self.nranges)]
+        self.sd_l       = np.zeros([self.nranges, self.maxfreqs])
+        self.w_l_e      = np.zeros([self.nranges, self.maxfreqs])
+        self.w_l        = np.zeros([self.nranges, self.maxfreqs])
+        self.p_l        = np.zeros([self.nranges, self.maxfreqs])
+        self.p_l_e      = np.zeros([self.nranges, self.maxfreqs])
+        self.v_l        = np.zeros([self.nranges, self.maxfreqs])
+        self.v_l_e      = np.zeros([self.nranges, self.maxfreqs])
+
+        self.gflg       = np.zeros([self.nranges, self.maxfreqs])
+        self.iflg       = np.zeros([self.nranges, self.maxfreqs])
+        self.qflg       = np.zeros([self.nranges, self.maxfreqs])
         
+        self.v_l_e      = np.zeros([self.nranges, self.maxfreqs])
+
         self.CalcBadlags()
 
     # writes out a record of the lss fit
@@ -104,7 +132,7 @@ class LombFit:
     def ProcessPulse(self, cubecache):
         for r in self.ranges:
             peaks = self.CalculatePeaks(r, cubecache)
-        #self.ProcessPeaks()
+        self.ProcessPeaks()
 
     # finds returns in spectrum and records cell velocity
     def CalculatePeaks(self, rgate, cubecache):
@@ -126,32 +154,44 @@ class LombFit:
         t = (np.array(map(lambda x : abs(x[1]-x[0]),self.rawacf['ltab'])[0:self.nlags]) * self.t_pulse / 1e6)[good_lags == True]
 
         #np.arange(0, self.nlags * self.t_pulse, self.t_pulse)[good_lags == True] / 1e6
-        print 'noise: ' + str(self.noise)
         samples = i_lags + 1j * q_lags
         alfs = np.linspace(0, self.maxalf, self.alfsteps)
-
+        
         # calcuate generalized lomb-scargle periodogram iteratively
-        self.lfits[rgate] = iterative_bayes(samples, t, self.freqs, alfs, cubecache, maxfreqs = 3, env_model = 1)
+        self.lfits[rgate] = iterative_bayes(samples, t, self.freqs, alfs, cubecache, maxfreqs = self.maxfreqs, env_model = 1)
         #self.sfits[rgate] = iterative_bayes(samples, t, freqs, alfs, maxfreqs = 2, env_model = 2)
         
     def ProcessPeaks(self):
         # compute velocity, width, and power for each peak with "sigma" and "lambda" fits
         # TODO: add exception checking to handle fit failures
-        # TODO: detect horrible fits (nonphysical spectral widths)
         for rgate in self.ranges:
-            for (i, fit) in enum(self.lfits[rgate]):
+            for (i, fit) in enumerate(self.lfits[rgate]):
                 # calculate "lambda" parameters
-                self.sd_l[rgate].append(pcov[DECAY_IDX][DECAY_IDX]) # TODO: what is sd_l (standard deviation of lambda?)
+                np.append(self.sd_l[rgate],0) # TODO: what is sd_l (standard deviation of lambda?)
+                
+                # see Effects of mixed scatter on SuperDARN convection maps near (1) for spectral width 
+                self.w_l[rgate,i] = C / (2 * np.pi * fit['alpha'] * self.tfreq)
+                self.w_l_e[rgate,i] = fit['alpha_fwhm']
+                self.p_l[rgate,i] = fit['amplitude'] / self.noise
+                self.p_l_e[rgate,i] = 0
+                v_l = (fit['frequency'] * C) / (2 * self.tfreq * 1e3)
+                self.v_l[rgate,i] = v_l
+                self.v_l_e[rgate,i] = fit['frequency_fwhm']
+                
+                # set gflg if any of the returns match vss_thresh and wss_thresh thresholds
+                # ss - surface scatter, v - velocity, w - spectral width
+                if v_l < self.vss_thresh and self.w_l[rgate, i] < self.wss_thresh:
+                    self.gflg[rgate,i] = 1
+                
+                # set iflg if ionospheric scatter velocity and spectral width thresholds are met
+                if v_l < self.vimax_thresh and v_l > self.vimin_thresh and self.w_l[rgate,i] > self.wimin_thresh and self.w_l[rgate, i] < self.wimax_thresh:
+                    self.iflg[rgate,i] = 1
 
-                self.w_l[rgate].append(1/fit['alpha'])
-                self.w_l_e[rgate].append(1/fit['alpha_fwhm'])
+                # set qflg if .. signal to noise ratios are high enough, not stuck 
+                if self.p_l[rgate,i] > self.qpwr_thresh and self.w_l_e[rgate,i] < self.qwle_thresh and self.w_l_e[rgate, i] < self.qvle_thresh:
+                    self.qflg[rgate,i] = 1
 
-                self.p_l[rgate].append(fit['amplitude'] / self.noise)
-                self.p_l_e[rgate].append(0)
-
-                self.v_l[rgate].append(0)
-                self.v_l_e[rgate].append(pcov[DF_IDX][DF_IDX])
-
+            '''
             for (i, fit) in enum(self.sfits[rgate]):
                 # calculate "sigma" parameters
                 self.sd_l[rgate].append(pcov[DECAY_IDX][DECAY_IDX]) # TODO: what is sd_l (standard deviation of sigma?)
@@ -161,17 +201,12 @@ class LombFit:
 
                 self.p_s[rgate].append(popt[POW_IDX])
                 self.p_s_e[rgate].append(pcov[POW_IDX][POW_IDX])
+            '''
 
 # TODO: determine meaning for v_s, and v_s_e.. pick highest snr velocity for gate?
 #        self.v_s[rgate].append(popt[DF_IDX] + freqs[peakidx])
 #        self.v_s_e[rgate].append(pcov[DF_IDX][DF_IDX])
-
-        # TODO: calculate qflg, gflg (ground and quality flags)
-        # TODO: calculate v, v_e
-        self.qflg[rgate] = 0 
-        self.gflg[rgate] = 0
-
-
+           
     def PlotPeak(self, rgate):
         for (i,fit) in enumerate(self.lfits[rgate]):
             plt.subplot(len(self.lfits[rgate]),1,i+1)
@@ -204,14 +239,40 @@ class LombFit:
         self.bad_lags = bad_lags
 
 # replicate rti-style plot 
-# plot p_l and v_ms of main peak as a function of time
+# plot w_l, p_l, and v_ms of main peak as a function of time
 # adapted from jef's plot-rti.py
-def PlotRTI(LombFits, beam):
+def PlotRTI(lombfits, beam):
     # assemble pulse time list
-    times = [fit.recordtime for fit in LombFits]
+    times = [fit.recordtime for fit in lombfits]
+     
+    velocity = np.zeros([len(times), lombfits[0].nranges])
+    # assemble velocity list, collect velocity at bean number
+   
+    for (t,pulse) in enumerate(lombfits):
+        if pulse.bmnum != beam:
+            continue
+        velocity[t,:] = pulse.v_l[:,0] * pulse.qflg[:,0] 
     
-    # assemble velocity list
-    for 
+    x = dates.date2num(times)
+    y = np.array(lombfits[0].ranges)
+    
+    plt.pcolor(x, y, velocity.T, cmap = VEL_CMAP)
+    plt.axis([x.min(), x.max(), y.min(), y.max()])
+    plt.grid(True)
+    plt.colorbar()
+    ax = plt.gca()
+
+    locator = dates.AutoDateLocator()
+    dateformatter = dates.AutoDateFormatter(locator)
+
+    ax.xaxis.set_major_locator(locator) 
+    ax.xaxis.set_major_formatter(dateformatter)
+
+    #fig = plt.gcf() 
+    #fig.autofmt_xdate()
+
+    pdb.set_trace()
+        
     
     # prepare     
 
@@ -223,50 +284,6 @@ def PlotRTI(LombFits, beam):
         #plt.axis([x.min(), x.max(), y.min(), y.max()])
         #plt.colorbar()
         #plt.show()
-'''
-    plt.title("%(radar)s channel %(channel)s :: RTI Plot of %(plotvar1)s\n" % (plotdict) + "on %d/%d/%d\nAlong Beam Direction: %s\n" %
-                                 (startday.month,startday.day,startday.year,text,))
-        clocator=MaxNLocator(nbins=4)
-        c1b = matplotlib.colorbar.ColorbarBase(
-               c1ax, cmap=plot1_cmap,norm=norm1,orientation='vertical',ticks=clocator)
-        c2b = matplotlib.colorbar.ColorbarBase(
-               c2ax, cmap=plot2_cmap,norm=norm2,orientation='vertical',ticks=clocator)
-        c1b.set_label(plotdict["plotvar1"]+" "+plotdict["plotvar1_label"])
-        c2b.set_label(plotdict["plotvar2"]+" "+plotdict["plotvar2_label"])
-        tcax.xaxis.set_ticks_position('bottom')
-        tb = matplotlib.colorbar.ColorbarBase(
-               tcax, cmap=tfreq_cmap,norm=tnorm,
-               orientation='horizontal',ticks=[9,14,19])
-        tcax.xaxis.set_label_text("Freq [MHz]",fontsize=6,va='center',ha='right')
-        tcax.xaxis.set_label_coords(-0.2,0.5)
-        labels=tcax.xaxis.get_majorticklabels()
-        for label in labels: label.set_fontsize(6)
-          #tcax.tick_params(axis='x', labelsize=6)
-    #              bcax.xaxis.set_ticks_position('top')
-    #              bb = matplotlib.colorbar.ColorbarBase(
-    #                   bcax, cmap=beam_cmap,norm=bnorm,
-    #                   orientation='horizontal',ticks=[0,1,2,3,4])
-    #              bcax.xaxis.set_label_text("Beam",fontsize=6,va='center',ha='left')
-    #              bcax.xaxis.set_label_coords(1.2,0.5)
-    #              #bcax.tick_params(axis='x', labelsize=6)
-    #              labels=bcax.xaxis.get_majorticklabels()
-    #              for label in labels: label.set_fontsize(6)  
-    #              bcax.xaxis.get_offset_text().set_visible(False) 
-
-        ncax.xaxis.set_ticks_position('top')
-        nformat=p.ScalarFormatter(useOffset=False)
-        nformat.set_powerlimits((0,0))
-        nb = matplotlib.colorbar.ColorbarBase(
-               ncax, cmap=noise_cmap,norm=nnorm,format=nformat,
-               orientation='horizontal',ticks=[0,5000,10000])
-        ncax.xaxis.set_label_text("Noise [x1E4]",fontsize=6,va='center',ha='left')
-        ncax.xaxis.set_label_coords(1.2,0.5)
-        #ncax.tick_params(axis='x', labelsize=6,labeltop=True,labelbottom=False)
-        labels=ncax.xaxis.get_majorticklabels()
-        for label in labels: label.set_fontsize(6)
-        ncax.xaxis.get_offset_text().set_visible(False)
-'''
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
@@ -284,11 +301,17 @@ if __name__ == '__main__':
     times = dfile.times
     cubecache = TimeCube()
     
+    lombfits = []
     for (i,t) in enumerate(times):
+        if i > 700:
+            break
+        if(dfile[t]['bmnum'] != 9):
+            continue
+        print i
+        print 'processing time ' + str(t)
         fit = LombFit(dfile[t])
         fit.ProcessPulse(cubecache)
-        if i > 20:
-            break
+        lombfits.append(fit)
     
-    PlotRTI(LombFits, 9):
+    PlotRTI(lombfits, 9)
     
