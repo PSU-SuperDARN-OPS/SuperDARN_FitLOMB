@@ -271,7 +271,6 @@ def PlotRTI(lombfits, beam):
     #fig = plt.gcf() 
     #fig.autofmt_xdate()
 
-    pdb.set_trace()
         
     
     # prepare     
@@ -303,7 +302,7 @@ if __name__ == '__main__':
     
     lombfits = []
     for (i,t) in enumerate(times):
-        if i > 700:
+        if i > 100:
             break
         if(dfile[t]['bmnum'] != 9):
             continue

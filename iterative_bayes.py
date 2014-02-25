@@ -7,12 +7,7 @@
 # (2) 
 # (3) "Bayesian Analysis. III. Applications to NMR Signal Detection, Model Selection and Parameter Estimation" by  G. Larry Bretthorst, 1990
 
-# approach:
-# 
-
-# TODO: add signal to noise ratio for calculations
-# TODO: add lambda power
-# TODO: add fit certainty
+# TODO: add better measures of fit certainty
 
 import numpy as np
 import numexpr as ne
@@ -20,6 +15,7 @@ import matplotlib.pyplot as plt
 import pdb
 # look into numexpr
 from timecube import TimeCube
+import pp
 
 VERBOSE = False 
 VEL_CMAP = plt.cm.PuOr
