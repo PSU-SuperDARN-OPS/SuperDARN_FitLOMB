@@ -17,7 +17,7 @@ import datetime
 # TimeCube is a class of cached cubes of amplitude(time, frequency, decay)
 # creating these is expensive and RAM is cheap, so...
 
-MAX_CUBES = 20 # these are ~100mb each..
+MAX_CUBES = 6 # these are ~100mb each..
 class TimeCube:
     def __init__(self, usecuda = False, maxsize = 20):
         self.cubecache = {}
@@ -42,7 +42,7 @@ class TimeCube:
             # check to see if cube cache is too big. it is, delete the least recently used cube
             self.cubetimes[datetime.datetime.now()] = key 
             if len(self.cubecache) > self.maxsize:
-                del self.cubecache[min(self.cubetimes.keys())]
+                del self.cubecache[self.cubetimes[min(self.cubetimes.keys())]]
         else:
             self.cubetimes
 
