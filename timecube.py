@@ -43,6 +43,7 @@ class TimeCube:
             self.cubetimes[datetime.datetime.now()] = key 
             if len(self.cubecache) > self.maxsize:
                 del self.cubecache[self.cubetimes[min(self.cubetimes.keys())]]
+                del self.cubetimes[min(self.cubetimes.keys())]
         else:
             self.cubetimes
 
