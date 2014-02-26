@@ -68,12 +68,12 @@ class LombFit:
         fmax = (MAX_V * 2 * (self.tfreq * 1e3)) / C
         nyquist = 1 / (2e-6 * self.t_pulse)
 
-        self.freqs = np.linspace(max(-nyquist, -fmax),min(nyquist, fmax), self.nlags * 20)
+        self.freqs = np.linspace(max(-nyquist, -fmax),min(nyquist, fmax), self.nlags * 10)
         self.maxwidth = 20
         self.widththreshold = .95 # widththreshold - statistical significance threshold for finding the extend of a peak
         self.peakthreshold = .5 # peakthreshold - statistical significance threshold for finding returns
-        self.maxalf = 300
-        self.alfsteps = 400
+        self.maxalf = 230
+        self.alfsteps = 150
         self.maxfreqs = 3
         self.alfs = np.linspace(0, self.maxalf, self.alfsteps)
 
@@ -82,15 +82,15 @@ class LombFit:
         self.wss_thresh = 40
         
         # threshold on power (snr), spectral width fwhm, and velocity fwhm for quality flag
-        self.qwle_thresh = 50
-        self.qvle_thresh = 50
+        self.qwle_thresh = 15
+        self.qvle_thresh = 15
         self.qpwr_thresh = 2
     
         # thresholds on velocity and spectral width for ionospheric scatter flag (m/s)
         self.wimin_thresh = 100
-        self.wimax_thresh = 1500
-        self.vimax_thresh = 100
-        self.vimin_thresh = 1000
+        self.wimax_thresh = 1400
+        self.vimax_thresh = 1000
+        self.vimin_thresh = 100
 
         # take average of smallest ten powers at range gate 0 for noise estimate
         self.noise = np.mean(sorted(self.rawacf['pwr0'])[:10])
@@ -140,7 +140,7 @@ class LombFit:
     # TODO: work with non-lambda env models
     def ParallelProcessPulse(self):
         # create pp job server
-        job_server = pp.Server()
+        job_server = pp.Server()#ppservers=("137.229.27.61",""))
 
         # prepare sample and time arrays 
         times_samples = [(self._CalcSamples(r)) for r in self.ranges]
@@ -163,7 +163,8 @@ class LombFit:
                 self.lfits[rgate] = job()
             except:
                 pdb.set_trace()
-         
+        job_server.print_stats()
+        job_server.destroy()         
         self.ProcessPeaks()
 
     # get time and good complex samples for a range gate
@@ -281,30 +282,46 @@ class LombFit:
 def PlotRTI(lombfits, beam):
     # assemble pulse time list
     times = [fit.recordtime for fit in lombfits]
-     
+    maxfreqs = lombfits[0].maxfreqs
+
     velocity = np.zeros([len(times), lombfits[0].nranges])
-    # assemble velocity list, collect velocity at bean number
-   
-    for (t,pulse) in enumerate(lombfits):
-        if pulse.bmnum != beam:
-            continue
-        velocity[t,:] = pulse.v_l[:,0] * pulse.qflg[:,0] 
-    
-    x = dates.date2num(times)
-    y = np.array(lombfits[0].ranges)
-    
-    plt.pcolor(x, y, velocity.T, cmap = VEL_CMAP)
-    plt.axis([x.min(), x.max(), y.min(), y.max()])
-    plt.grid(True)
-    plt.colorbar()
-    ax = plt.gca()
+    for i in range(maxfreqs):
+        plt.subplot(maxfreqs, 1, i+1)
+        # assemble velocity list, collect velocity at beam number
+        for (t,pulse) in enumerate(lombfits):
+            if pulse.bmnum != beam:
+                continue
+            velocity[t,:] = pulse.v_l[:,i] * pulse.qflg[:,i] 
 
-    locator = dates.AutoDateLocator()
-    dateformatter = dates.AutoDateFormatter(locator)
+            ionospheric_scatter = np.sum(pulse.iflg * pulse.qflg, axis=1) > 0
+            surface_scatter = np.sum(pulse.gflg * pulse.qflg, axis=1) > 0
+            mixed_scatter = ionospheric_scatter * surface_scatter
+             
+            if sum(mixed_scatter):
+                print 'mixed scatter at: ' + str( mixed_scatter.nonzero())
 
-    ax.xaxis.set_major_locator(locator) 
-    ax.xaxis.set_major_formatter(dateformatter)
 
+            
+        
+        x = dates.date2num(times)
+        y = np.array(lombfits[0].ranges)
+        
+        plt.pcolor(x, y, velocity.T, cmap = VEL_CMAP)
+
+        plt.axis([x.min(), x.max(), y.min(), y.max()])
+        #plt.axis([x.min(), x.max(), y.min(), y.max()])
+        plt.grid(True)
+        plt.colorbar()
+        ax = plt.gca()
+
+        locator = dates.AutoDateLocator()
+        dateformatter = dates.AutoDateFormatter(locator)
+
+        ax.xaxis.set_major_locator(locator) 
+        ax.xaxis.set_major_formatter(dateformatter)
+    plt.show()
+
+    pdb.set_trace()
     #fig = plt.gcf() 
     #fig.autofmt_xdate()
 
@@ -331,7 +348,8 @@ if __name__ == '__main__':
     args = parser.parse_args() 
 
     # good time at McM is 3/20/2013, 8 AM UTC
-    infile = '20130320.0801.00.mcm.a.rawacf'#'20130320.0801.00.mcm.a.rawacf'
+    infile = '/mnt/flash/sddata/0208/all.rawacf'
+    #20130320.0801.00.mcm.a.rawacf'#'20130320.0801.00.mcm.a.rawacf'
     dfile = DMapFile(files=[infile])
 
     times = dfile.times
@@ -339,8 +357,6 @@ if __name__ == '__main__':
     
     lombfits = []
     for (i,t) in enumerate(times):
-        if i > 100:
-            break
         if(dfile[t]['bmnum'] != 9):
             continue
         print i
@@ -349,6 +365,5 @@ if __name__ == '__main__':
 
         fit.ParallelProcessPulse()
         lombfits.append(fit)
-    
     PlotRTI(lombfits, 9)
     
