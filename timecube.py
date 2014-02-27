@@ -38,7 +38,6 @@ class TimeCube:
     def _listhash(self,l):
         return ','.join([str(l[0]), str(l[-1]), str(len(l))])
 
-    #@profile 
     def get_spacecube(self, t, f, alfs, env_model):
         key = self._cubeparam_key(t,f,alfs,env_model) 
 

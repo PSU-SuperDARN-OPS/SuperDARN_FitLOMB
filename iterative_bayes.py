@@ -11,10 +11,10 @@
 
 import numpy as np
 import numexpr as ne
+
 import pdb
 # look into numexpr
 from timecube import TimeCube, make_spacecube
-
 VERBOSE = False 
 
 # jef spaleta's code..
@@ -149,6 +149,7 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
 
     fit = {}
     fit['amplitude'] = R_f[max_tuple] / CS_f[max_tuple]
+    fit['amplitude_error_unscaled'] = CS_f[max_tuple]
     fit['frequency'] = f[max_tuple[1]]
     fit['frequency_fwhm'] = freq_fwhm 
     fit['alpha'] = alfs[max_tuple[0]]
