@@ -2,7 +2,6 @@
 
 # mit license
 import argparse
-import pdb
 
 from sd_data_tools import *
 from pydmap import DMapFile, timespan, dt2ts, ts2dt
@@ -34,8 +33,8 @@ MAX_V = 1000 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 2000 # m/s, max spectral width to include in lomb 
 C = 3e8
 
-ALPHA_RES = 1 # m/s
-FREQ_RES = 1 # m/s
+ALPHA_RES = 5 # m/s
+FREQ_RES = 5 # m/s
 
 VEL_CMAP = plt.cm.RdBu
 FREQ_CMAP = plt.cm.spectral
@@ -125,7 +124,7 @@ class LombFit:
         self.gflg       = np.zeros([self.nranges, self.maxfreqs])
         self.iflg       = np.zeros([self.nranges, self.maxfreqs])
         self.qflg       = np.zeros([self.nranges, self.maxfreqs])
-        
+       
         self.CalcBadlags()
     
     # writes out a record of the lss fit
@@ -146,6 +145,7 @@ class LombFit:
         
         # prepare sample and time arrays 
         times_samples = [(self._CalcSamples(r)) for r in self.ranges]
+
         
         jobs = []
         
@@ -170,24 +170,22 @@ class LombFit:
     # get time and good complex samples for a range gate
     def _CalcSamples(self, rgate):
         offset = self.nlags * rgate
-        # acfd is mplgs * nrang
+
         # see http://davit.ece.vt.edu/davitpy/_modules/pydarn/sdio/radDataTypes.html
-        
         i_lags = np.array(self.acfi[offset:offset+self.nlags])
         q_lags = np.array(self.acfq[offset:offset+self.nlags])
-        # TODO: FIND GOOD LAGS MASK
+        
         good_lags = np.ones(self.nlags)
-        good_lags[self.bad_lags[rgate]] = False 
+        good_lags[self.bad_lags[rgate] != 0] = 0
 
         lags = map(lambda x : abs(x[1]-x[0]),self.rawacf['ltab'])[0:self.nlags]
 
         i_lags = i_lags[good_lags == True]
         q_lags = q_lags[good_lags == True]
 
-        t = (np.array(map(lambda x : abs(x[1]-x[0]),self.rawacf['ltab'])[0:self.nlags]) * self.t_pulse / 1e6)[good_lags == True]
-
-        #np.arange(0, self.nlags * self.t_pulse, self.t_pulse)[good_lags == True] / 1e6
+        t = (np.array(lags) * self.t_pulse / 1e6)[good_lags == True]
         samples = i_lags + 1j * q_lags
+
         return t, samples
 
 
@@ -208,6 +206,7 @@ class LombFit:
                 np.append(self.sd_l[rgate],0) # TODO: what is sd_l (standard deviation of lambda?)
                  
                 # see Effects of mixed scatter on SuperDARN convection maps near (1) for spectral width 
+                # see ros.3.6/codebase/superdarn/src.lib/tk/fitacf/src/fit_acf.c and do_fit.c
                 self.w_l[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.t_pulse * 1e-6) * (self.tfreq * 1e3)) 
             
                 dalpha = self.alfs[1] - self.alfs[0]
@@ -276,14 +275,36 @@ class LombFit:
             plt.ylabel('SNR')
 
         plt.show()
-
+    
+    # TODO: investigate adding bad lags detection
+    # uses https://github.com/jspaleta/SuperDARN_MSI_ROS/blob/d925b7740e6a95c0e1b653a08bf8967361eb46f8/linux/home/radar/ros.3.6/codebase/superdarn/src.lib/tk/fitacf.2.5/src/badlags.c
+    # by looking at spikes in power?
     def CalcBadlags(self):
         bad_lags = [[] for i in range(self.nranges)]
-
+        
+        # get bad lags - transmit pulse overlap
         for i in range(self.nranges):
             bad_lags[i] = get_badlags(self.rawacf, i)
         
+        # get bad lags - power exceeds lag zero power
+        # "Spectral width of SuperDARN echos", Ponomarenko and Waters
+        for rgate in self.ranges:
+            # .. this will only work if we have a good lag zero sample
+            # TODO: work on fall back
+            if not bad_lags[rgate][0]: 
+                offset = self.nlags * rgate
+                i_lags = np.array(self.acfi[offset:offset+self.nlags])
+                q_lags = np.array(self.acfq[offset:offset+self.nlags])
+                samples = i_lags + 1j * q_lags 
+                
+                lagpowers = abs(samples) ** 2
+                bad_lags[rgate] += (lagpowers > lagpowers[0])# add interference lags
+                #plt.plot(lagpowers * bad_lags[rgate])
+                #plt.show()
+            else:
+                print 'bad lag in lag zero... gate: ' + str(rgate)
         self.bad_lags = bad_lags
+
 
 
 def PlotMixed(lomb):
@@ -392,7 +413,8 @@ if __name__ == '__main__':
         print 'processing time ' + str(t)
         fit = LombFit(dfile[t])
         
-        fit.ParallelProcessPulse()
+        #fit.ParallelProcessPulse()
+        fit.ProcessPulse(cubecache)
         lombfits.append(fit)
         pickle.dump(lombfits, open('beam9_mcm.p', 'wb'))
     del dfile

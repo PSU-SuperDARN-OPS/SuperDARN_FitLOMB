@@ -10,7 +10,6 @@
 import numpy as np
 import numexpr as ne
 
-import pdb
 # look into numexpr
 from timecube import TimeCube, make_spacecube
 VERBOSE = False 
@@ -93,9 +92,8 @@ def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = Fa
 # to profile:
 # kernprof.py -l foo.py
 # python -m line_profiler foo.py.lprof
-#@profile
 def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = False):
-    N = len(t) * 2# see equation (10) in [4]
+    N = len(t) * 2.# see equation (10) in [4]
     m = 2
 
     dbar2 = (sum(np.real(s) ** 2) + sum(np.imag(s) ** 2)) / (N) # (11) in [4] 
@@ -114,8 +112,8 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     # omegas * times * alphas
     # TODO: [12] has real - imag, but jef has real + imag. only jef's way works.. why?
     # about 50% of execution time is spent here
-    R_f = (np.dot(np.real(s), ce_matrix) - np.dot(np.imag(s), se_matrix)).T
-    I_f = (np.dot(np.real(s), se_matrix) + np.dot(np.imag(s), ce_matrix)).T
+    R_f = (np.dot(np.real(s), ce_matrix) + np.dot(np.imag(s), se_matrix)).T
+    I_f = (np.dot(np.real(s), se_matrix) - np.dot(np.imag(s), ce_matrix)).T
     
     # we might be able to eliminate constants.. considering that we blow them away with the normalization anyways
     # hbar2 is a "sufficient statistic" 
@@ -124,8 +122,9 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     
     # use logarithms to avoid underflow (** 20 will drown large probabilities..)
     # about 30% of execution time is spent here
-    P_f = np.log10(N * dbar2 - hbar2)  * ((2 - N) / 2) - np.log10(CS_f)
-#    P_f = ne.evaluate('log10((N * dbar2 - hbar2) ** ((2 - N) / 2.)) - log10(CS_f)') # (it takes a little longer to use numexpr..)
+    P_f = np.log10(N * dbar2 - hbar2)  * ((2 - N) / 2.) - np.log10(CS_f)
+
+    #P_f = ne.evaluate('log10((N * dbar2 - hbar2) ** ((2 - N) / 2.)) - log10(CS_f)') # (it takes a little longer to use numexpr..)
 
     # don't bother de-logging, we don't use this anyways.
     #P_f = 10 * pow(10., P_f)
@@ -146,7 +145,8 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     freq_fwhm = find_fwhm(freq_slice, max_tuple[0])
 
     fit = {}
-    fit['amplitude'] = R_f[max_tuple] / CS_f[max_tuple]
+
+    fit['amplitude'] = (R_f[max_tuple] + I_f[max_tuple]) / CS_f[max_tuple] 
     fit['amplitude_error_unscaled'] = CS_f[max_tuple]
     fit['frequency'] = f[max_tuple[1]]
     fit['frequency_fwhm'] = freq_fwhm 
@@ -155,11 +155,41 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     fit['samples'] = s.copy()
     fit['t'] = t.copy()
     fit['signal'] = fit['amplitude'] * np.exp(1j * 2 * np.pi * fit['frequency'] * t) * np.exp(-fit['alpha'] * t)
-    
     return fit 
 
     # calculate amplitude estimate from A_est[max] = R_est[max] / C_est[max]
-    # B_est from  I_est[max] / S_est[max] (what is it?)
 
 if __name__ == '__main__':
-    pass 
+    import matplotlib.pyplot as plt
+    fs = 100.
+    ts = 1./fs
+
+    f1 = 4
+    f2 = 20 
+
+    a1 = 2
+    a2 = .5 
+    
+    alf1 = 4
+    alf2 = 2
+
+    t = np.arange(0, 50) * ts
+
+    sin1 = a1 * np.exp(1j * 2 * np.pi * f1 * t) * np.exp(-alf1 * t)
+    sin2 = a2 * np.exp(1j * 2 * np.pi * f2 * t) * np.exp(-alf2 * t)
+
+    samples = sin1 + sin2
+
+    freqs = np.linspace(-fs/2, fs/2, 40 * len(t))
+    alfs = np.linspace(0,6, 30 * len(t))
+
+    fits = iterative_bayes(samples, t, freqs, alfs, 1, 2)
+    for fit in fits:
+        print 'amp: ' + str(fit['amplitude'])
+        print 'freq: ' + str(fit['frequency'])
+        print 'alf: ' + str(fit['alpha'])
+
+    plt.plot(np.real(samples))
+    plt.plot(np.imag(samples))
+
+    plt.show()
