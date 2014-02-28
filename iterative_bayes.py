@@ -3,9 +3,7 @@
 
 # equations to use bayesian analysis to determine the spectral content of a FitACF return
 # references:
-# (1)
-# (2) 
-# (3) "Bayesian Analysis. III. Applications to NMR Signal Detection, Model Selection and Parameter Estimation" by  G. Larry Bretthorst, 1990
+# "Bayesian Analysis. III. Applications to NMR Signal Detection, Model Selection and Parameter Estimation" by  G. Larry Bretthorst, 1990
 
 # TODO: add better measures of fit certainty
 
@@ -17,8 +15,8 @@ import pdb
 from timecube import TimeCube, make_spacecube
 VERBOSE = False 
 
-# jef spaleta's code..
-# modified variable "half" factor (for working with logs)
+# modified from jef spaleta's code..
+# -added variable "half" factor (for working with logs)
 # may be better to fit a spline
 # (see http://stackoverflow.com/questions/10582795/finding-the-full-width-half-maximum-of-a-peak)
 # however, this would assume that a spline is a good model, that approach may break with multiple peaks
@@ -116,8 +114,8 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     # omegas * times * alphas
     # TODO: [12] has real - imag, but jef has real + imag. only jef's way works.. why?
     # about 50% of execution time is spent here
-    R_f = (np.dot(np.real(s), ce_matrix) + np.dot(np.imag(s), se_matrix)).T
-    I_f = (np.dot(np.real(s), se_matrix) - np.dot(np.real(s), ce_matrix)).T
+    R_f = (np.dot(np.real(s), ce_matrix) - np.dot(np.imag(s), se_matrix)).T
+    I_f = (np.dot(np.real(s), se_matrix) + np.dot(np.imag(s), ce_matrix)).T
     
     # we might be able to eliminate constants.. considering that we blow them away with the normalization anyways
     # hbar2 is a "sufficient statistic" 
@@ -132,11 +130,11 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     # don't bother de-logging, we don't use this anyways.
     #P_f = 10 * pow(10., P_f)
     #P_f = ((N * dbar2 - hbar2) ** ((2 - N) / 2.)) / C_f # (18) in [4]
-    #P_f /= P_f.sum() # this is probably not valid..
+    # P_f /= P_f.sum() # this is probably not valid..
     
     # see "Nonuniform Sampling: Bandwidth and Aliasing"
     # for <sigma**2>
-    #sigma2 = (N * dbar2 - hbar2) / (N - 4.) # ???
+    # sigma2 = (N * dbar2 - hbar2) / (N - 4.) # ???
 
     maxidx = np.argmax(P_f)
     max_tuple = np.unravel_index(maxidx, P_f.shape)
@@ -164,26 +162,4 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     # B_est from  I_est[max] / S_est[max] (what is it?)
 
 if __name__ == '__main__':
-    fs = 1. 
-    ts = 1./fs
-    t_total = 20 * (1/fs)
-    nfreqs_mult = 10
-    NOISE_SCALE = .5 
-    MAX_SIGNALS = 5
-    alfs = np.linspace(0,1,50) # range of possible decay rates
-    t = np.arange(0,t_total,1./fs)
-
-    nfreqs = nfreqs_mult * len(t) 
-    freqs = np.linspace(-.5/ts, .5/ts, nfreqs)
-
-    noise = np.random.normal(scale=NOISE_SCALE,size=len(t)) + 1j * np.random.normal(scale=NOISE_SCALE,size=len(t))
-    sin1 = 1 * np.exp(1j * 2 * np.pi * t * -.25) * np.exp(-t *.10) 
-    sin2 = 2 * np.exp(1j * 2 * np.pi * t * .07) * np.exp(-t * .02)
-
-    samples =  sin1 + sin2 + noise
-
-    for si in range(MAX_SIGNALS):
-        fit = calculate_bayes(samples, t, freqs, alfs)
-        fit['index'] = si
-        samples -= fit['amplitude'] * np.exp(1j * 2 * np.pi * t * fit['frequency']) * np.exp(-t * fit['alpha'])
-    
+    pass 

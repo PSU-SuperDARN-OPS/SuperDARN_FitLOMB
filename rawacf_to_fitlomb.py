@@ -34,13 +34,13 @@ MAX_V = 1000 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 2000 # m/s, max spectral width to include in lomb 
 C = 3e8
 
-ALPHA_RES = 5 # m/s
-FREQ_RES = 5# m/s
+ALPHA_RES = 1 # m/s
+FREQ_RES = 1 # m/s
 
 VEL_CMAP = plt.cm.RdBu
 FREQ_CMAP = plt.cm.spectral
 NOISE_CMAP = plt.cm.autumn
-SPECW_CMAP = plt.cm.hsv
+SPECW_CMAP = plt.cm.hot
 POWER_CMAP = plt.cm.jet
 
 class LombFit:
@@ -77,8 +77,7 @@ class LombFit:
         self.freqs = np.linspace(max(-nyquist, -fmax),min(nyquist, fmax), self.nlags * 30)
         
         self.maxalf = amax
-        self.alfsteps = amax / ALPHA_RES
-        print 'alpha steps: ' + str(self.alfsteps')
+        self.alfsteps = int(amax / ALPHA_RES)
         self.maxfreqs = 3
         self.alfs = np.linspace(0, self.maxalf, self.alfsteps)
 
@@ -209,16 +208,17 @@ class LombFit:
                 np.append(self.sd_l[rgate],0) # TODO: what is sd_l (standard deviation of lambda?)
                  
                 # see Effects of mixed scatter on SuperDARN convection maps near (1) for spectral width 
-                self.w_l[rgate,i] = (fit['alpha'] / (2 * np.pi)) * (C / (self.tfreq * 1e3))
-                dalpha = self.alphas[1] - self.alphas[0]
+                self.w_l[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.t_pulse * 1e-6) * (self.tfreq * 1e3)) 
+            
+                dalpha = self.alfs[1] - self.alfs[0]
                 # approximate alpha error by taking half of range of alphas covered in fwhm
                 self.w_l_e[rgate,i] = fit['alpha_fwhm'] * dalpha / FWHM_TO_SIGMA
                 
                 # amplitude estimation, see bayesian analysis v: amplitude estimation, multiple well separated sinusoids
-                # bretthorst, equation 78
+                # bretthorst, equation 78, I'm probably doing this wrong...
+                # to match fitacf, scale p_l by 10 * log10
                 self.p_l[rgate,i] = fit['amplitude'] / self.noise
-                pdb.set_trace()
-                self.p_l_e[rgate,i] = np.sqrt(self.noise/fit['amplitude_error_unscaled'])/self.noise
+                self.p_l_e[rgate,i] = np.sqrt(self.noise ** 2/fit['amplitude_error_unscaled'])/self.noise # this may be scaled wrong..
 
                 v_l = (fit['frequency'] * C) / (2 * self.tfreq * 1e3)
                 self.v_l[rgate,i] = v_l
@@ -298,7 +298,7 @@ def PlotMixed(lomb):
 # replicate rti-style plot 
 # plot w_l, p_l, and v_ms of main peak as a function of time
 # adapted from jef's plot-rti.py
-def PlotRTI(lombfits, beam):
+def PlotVRTI(lombfits, beam):
     # assemble pulse time list
     times = [fit.recordtime for fit in lombfits]
     maxfreqs = lombfits[0].maxfreqs
@@ -316,7 +316,40 @@ def PlotRTI(lombfits, beam):
         y = np.array(np.arange(max(ranges)))
         
         plt.pcolor(x, y, velocity.T, cmap = VEL_CMAP)
-        plt.clim([-500,500])
+        plt.clim([-800,800])
+        plt.axis([x.min(), x.max(), y.min(), y.max()])
+        #plt.axis([x.min(), x.max(), y.min(), y.max()])
+        plt.grid(True)
+        plt.colorbar()
+        ax = plt.gca()
+
+        locator = dates.AutoDateLocator()
+        dateformatter = dates.AutoDateFormatter(locator)
+
+        ax.xaxis.set_major_locator(locator) 
+        ax.xaxis.set_major_formatter(dateformatter)
+    plt.show()
+
+
+def PlotWRTI(lombfits, beam):
+    # assemble pulse time list
+    times = [fit.recordtime for fit in lombfits]
+    maxfreqs = lombfits[0].maxfreqs
+    ranges = [lf.nranges for lf in lombfits]
+    widths = np.zeros([len(times), max(ranges)])
+    for i in range(maxfreqs):
+        plt.subplot(maxfreqs, 1, i+1)
+        # assemble velocity list, collect velocity at beam number
+        for (t,pulse) in enumerate(lombfits):
+            if pulse.bmnum != beam:
+                continue
+            widths[t,:] = np.concatenate((pulse.w_l[:,i] * pulse.qflg[:,i], np.zeros(max(ranges) - pulse.nranges)))
+
+        x = dates.date2num(times)
+        y = np.array(np.arange(max(ranges)))
+        
+        plt.pcolor(x, y, widths.T, cmap = SPECW_CMAP)
+        plt.clim([0,1500])
         plt.axis([x.min(), x.max(), y.min(), y.max()])
         #plt.axis([x.min(), x.max(), y.min(), y.max()])
         plt.grid(True)
@@ -342,8 +375,8 @@ if __name__ == '__main__':
     args = parser.parse_args() 
 
     # good time at McM is 3/20/2013, 8 AM UTC
-    infile = '/mnt/windata/sddata/0207/all.rawacf'
-    #20130320.0801.00.mcm.a.rawacf'#'20130320.0801.00.mcm.a.rawacf'
+    #infile = '/mnt/windata/sddata/0207/all.rawacf'
+    infile = '20130320.0801.00.mcm.a.rawacf' #20130320.0801.00.mcm.a.rawacf'#'20130320.0801.00.mcm.a.rawacf'
     dfile = DMapFile(files=[infile])
 
     times = dfile.times
@@ -353,19 +386,15 @@ if __name__ == '__main__':
     for (i,t) in enumerate(times):
         if(dfile[t]['bmnum'] != 9):
             continue
-        if i < 3000:
-            continue
-        if i > 12000:
+        if i > 100:
             break
-        
-
         print i
         print 'processing time ' + str(t)
         fit = LombFit(dfile[t])
         
         fit.ParallelProcessPulse()
         lombfits.append(fit)
-        pickle.dump(lombfits, open('beam9_ade_0207.re.p', 'wb'))
+        pickle.dump(lombfits, open('beam9_mcm.p', 'wb'))
     del dfile
     #PlotRTI(lombfits, 9)
     
