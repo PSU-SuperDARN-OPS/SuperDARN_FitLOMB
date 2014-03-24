@@ -85,9 +85,9 @@ class LombFit:
         self.w_thresh = 90. # blanchard, 2009
         
         # threshold on power (snr), spectral width std error m/s, and velocity std error m/s for quality flag
-        self.qwle_thresh = 20
-        self.qvle_thresh = 20
-        self.qpwr_thresh = 2
+        self.qwle_thresh = 80
+        self.qvle_thresh = 80
+        self.qpwr_thresh = .2
     
         # thresholds on velocity and spectral width for ionospheric scatter flag (m/s)
         self.wimin_thresh = 100
@@ -207,8 +207,9 @@ class LombFit:
                  
                 # see Effects of mixed scatter on SuperDARN convection maps near (1) for spectral width 
                 # see ros.3.6/codebase/superdarn/src.lib/tk/fitacf/src/fit_acf.c and do_fit.c
-                self.w_l[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.t_pulse * 1e-6) * (self.tfreq * 1e3)) 
-            
+                #self.w_l[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.t_pulse * 1e-6) * (self.tfreq * 1e3)) 
+                self.w_l[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.tfreq * 1e3)) 
+
                 dalpha = self.alfs[1] - self.alfs[0]
                 # approximate alpha error by taking half of range of alphas covered in fwhm
                 self.w_l_e[rgate,i] = fit['alpha_fwhm'] * dalpha / FWHM_TO_SIGMA
@@ -217,7 +218,7 @@ class LombFit:
                 # bretthorst, equation 78, I'm probably doing this wrong...
                 # to match fitacf, scale p_l by 10 * log10
                 self.p_l[rgate,i] = fit['amplitude'] / self.noise
-                self.p_l_e[rgate,i] = np.sqrt(self.noise ** 2/fit['amplitude_error_unscaled'])/self.noise # this may be scaled wrong..
+                self.p_l_e[rgate,i] = np.sqrt((self.noise ** 2)/fit['amplitude_error_unscaled'])/self.noise # this may be scaled wrong..
 
                 v_l = (fit['frequency'] * C) / (2 * self.tfreq * 1e3)
                 self.v_l[rgate,i] = v_l
@@ -248,7 +249,6 @@ class LombFit:
                 self.p_s[rgate].append(popt[POW_IDX])
                 self.p_s_e[rgate].append(pcov[POW_IDX][POW_IDX])
             '''
-
 # TODO: determine meaning for v_s, and v_s_e.. pick highest snr velocity for gate?
 #        self.v_s[rgate].append(popt[DF_IDX] + freqs[peakidx])
 #        self.v_s_e[rgate].append(pcov[DF_IDX][DF_IDX])
@@ -334,8 +334,8 @@ def PlotVRTI(lombfits, beam):
             velocity[t,:] = np.concatenate((pulse.v_l[:,i] * pulse.qflg[:,i], np.zeros(max(ranges) - pulse.nranges)))
 
         x = dates.date2num(times)
-        y = np.array(np.arange(max(ranges)))
-        
+        y = np.array(np.arange(max(ranges))) * pulse.rsep
+
         plt.pcolor(x, y, velocity.T, cmap = VEL_CMAP)
         plt.clim([-800,800])
         plt.axis([x.min(), x.max(), y.min(), y.max()])
@@ -367,10 +367,43 @@ def PlotWRTI(lombfits, beam):
             widths[t,:] = np.concatenate((pulse.w_l[:,i] * pulse.qflg[:,i], np.zeros(max(ranges) - pulse.nranges)))
 
         x = dates.date2num(times)
-        y = np.array(np.arange(max(ranges)))
-        
+        y = np.array(np.arange(max(ranges))) * pulse.rsep
         plt.pcolor(x, y, widths.T, cmap = SPECW_CMAP)
         plt.clim([0,1500])
+        plt.axis([x.min(), x.max(), y.min(), y.max()])
+        #plt.axis([x.min(), x.max(), y.min(), y.max()])
+        plt.grid(True)
+        plt.colorbar()
+        ax = plt.gca()
+
+        locator = dates.AutoDateLocator()
+        dateformatter = dates.AutoDateFormatter(locator)
+
+        ax.xaxis.set_major_locator(locator) 
+        ax.xaxis.set_major_formatter(dateformatter)
+    plt.show()
+
+
+def PlotPRTI(lombfits, beam):
+    # assemble pulse time list
+    times = [fit.recordtime for fit in lombfits]
+    maxfreqs = lombfits[0].maxfreqs
+
+    ranges = [lf.nranges for lf in lombfits]
+    powers = np.zeros([len(times), max(ranges)])
+    for i in range(maxfreqs):
+        plt.subplot(maxfreqs, 1, i+1)
+        # assemble velocity list, collect velocity at beam number
+        for (t,pulse) in enumerate(lombfits):
+            if pulse.bmnum != beam:
+                continue
+            powers[t,:] = np.concatenate((pulse.p_l[:,i] * pulse.qflg[:,i], np.zeros(max(ranges) - pulse.nranges)))
+
+        x = dates.date2num(times)
+        y = np.array(np.arange(max(ranges))) * pulse.rsep
+
+        plt.pcolor(x, y, powers.T, cmap = SPECW_CMAP)
+        plt.clim([0,50])
         plt.axis([x.min(), x.max(), y.min(), y.max()])
         #plt.axis([x.min(), x.max(), y.min(), y.max()])
         plt.grid(True)
@@ -397,7 +430,7 @@ if __name__ == '__main__':
 
     # good time at McM is 3/20/2013, 8 AM UTC
     #infile = '/mnt/windata/sddata/0207/all.rawacf'
-    infile = '20130320.0801.00.mcm.a.rawacf' #20130320.0801.00.mcm.a.rawacf'#'20130320.0801.00.mcm.a.rawacf'
+    infile = '20140324.1600.04.kod.c.rawacf'#'20140318.2000.01.kod.c.rawacf'#'20140318.0200.04.kod.c.rawacf'#'20140320.2200.03.kod.c.rawacf'#20140319.2215.03.kod.c.rawacf' #'20130320.0801.00.mcm.a.rawacf' #20130320.0801.00.mcm.a.rawacf'#'20130320.0801.00.mcm.a.rawacf'
     dfile = DMapFile(files=[infile])
 
     times = dfile.times
@@ -407,16 +440,19 @@ if __name__ == '__main__':
     for (i,t) in enumerate(times):
         if(dfile[t]['bmnum'] != 9):
             continue
-        if i > 100:
+        if(i < 96 * 60 / 3.):
+            continue
+        if(i > 101 * 60 / 3.):
             break
         print i
         print 'processing time ' + str(t)
         fit = LombFit(dfile[t])
         
-        #fit.ParallelProcessPulse()
-        fit.ProcessPulse(cubecache)
+        fit.ParallelProcessPulse()
+        #fit.ProcessPulse(cubecache) # note: debugging is easier with the non-parallel version..
         lombfits.append(fit)
-        pickle.dump(lombfits, open('beam9_mcm.p', 'wb'))
+    
+    pickle.dump(lombfits, open('beam9_kod_cwhaarp.p', 'wb'))
     del dfile
     #PlotRTI(lombfits, 9)
     

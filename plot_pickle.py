@@ -1,7 +1,6 @@
 from rawacf_to_fitlomb import *
 import pdb
-import cPickle as pickle
-
+import pickle
 
 # assumes times are the same between rawacf and fitacf
 def compare_lombfit(fitacf, fitlombs):
@@ -40,14 +39,15 @@ def compare_lombfit(fitacf, fitlombs):
             noise = fitacf['noise.sky']
             amp = noise * (10 ** (fitacf['p_l'][i]/10))
             f = (fitacf['v'][i] * 2 * fitlomb.tfreq * 1e3) / C
-            #alf = fitacf['w_l'][i] # * ??? should be following line
-            alf = (fitacf['w_l'][i] * 2 * np.pi * fitlomb.tfreq * 1e3 * fitlomb.t_pulse * 1e-6) / C 
+            alf = fitacf['w_l'][i] # * ??? should be following line
+            #alf = (fitacf['w_l'][i] * 2 * np.pi * fitlomb.tfreq * 1e3 * fitlomb.t_pulse * 1e-6) / C 
             facf = amp * np.exp(1j * 2 * np.pi * f * t) * np.exp(-alf * t)
             print 'gate : ' + str(s)
             print 'fitacf alpha: ' + str(alf)
             print 'lomb alpha  : ' + str(fit['alpha']) 
             print ''
-            
+            if fit['alpha'] < 0:
+                pdb.set_trace()
             plt.plot(t,np.real(samples))
             plt.plot(t,np.real(fitsignal))
             plt.plot(t,np.real(facf))
@@ -60,11 +60,12 @@ def compare_lombfit(fitacf, fitlombs):
             plt.show()
 
 if __name__ == "__main__":
-    data = 'beam9_mcm.p'
-    fitacf = '20130320.0801.00.mcm.a.fitacf'
+    data = 'beam9_kod_cwhaarp.p'
+    #fitacf = '20130320.0801.00.mcm.a.fitacf'
+    fitacf = '20140319.2215.03.kod.c.fitacf'
     fitlombs = pickle.load(open(data, 'rb'))
 
-    compare_lombfit(fitacf, fitlombs)
+    #compare_lombfit(fitacf, fitlombs)
     
 #    for lomb in fitlombs:
 #
@@ -75,5 +76,6 @@ if __name__ == "__main__":
 
     PlotVRTI(fitlombs, 9)
     PlotWRTI(fitlombs, 9)
+    PlotPRTI(fitlombs, 9)
 
-       
+    pdb.set_trace()

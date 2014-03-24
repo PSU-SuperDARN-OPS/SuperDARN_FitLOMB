@@ -104,7 +104,7 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     elif timecube:
         ce_matrix, se_matrix, CS_f = timecube 
     else:
-        ce_matrix, se_matrix, CS_f = make_spacecube(t, freqs, alfs, env_model)
+        ce_matrix, se_matrix, CS_f = make_spacecube(t, f, alfs, env_model)
 
     # create R_f and I_f (12) and (13) in [4]
     # these reduce to the real and complex parts of the fourier transform for uniformly sampled data
@@ -145,7 +145,6 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     freq_fwhm = find_fwhm(freq_slice, max_tuple[0])
 
     fit = {}
-
     fit['amplitude'] = (R_f[max_tuple] + I_f[max_tuple]) / CS_f[max_tuple] 
     fit['amplitude_error_unscaled'] = CS_f[max_tuple]
     fit['frequency'] = f[max_tuple[1]]
