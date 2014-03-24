@@ -13,6 +13,7 @@ import datetime
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as dates
+import h5py
 
 from libfitacf import get_badsamples, get_badlags
 from scipy.optimize import curve_fit
@@ -20,6 +21,12 @@ import scipy.signal as signal
 import pp
 
 from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes
+
+FITLOMB_REVISION_MAJOR = 0
+FITLOMB_REVISION_MINOR = 0
+ORIGIN_CODE = 'rawacf_to_fitlomb.py'
+
+DSET_COMPRESSION = 'gzip'
 
 I_OFFSET = 0
 Q_OFFSET = 1
@@ -41,6 +48,16 @@ FREQ_CMAP = plt.cm.spectral
 NOISE_CMAP = plt.cm.autumn
 SPECW_CMAP = plt.cm.hot
 POWER_CMAP = plt.cm.jet
+
+GROUP_ATTRS = ['radar.revision.major', 'radar.revision.minor', \
+        'origin.command', 'cp', 'stid', \
+        'time.yr', 'time.mo', 'time.dy', 'time.hr', 'time.mt', 'time.sc', 'time.us', \
+        'txpow', 'nave', 'atten', 'lagfr', 'smsep', 'ercod', 'stat.agc', 'stat.lopwr', \
+        'noise.search', 'noise.mean', 'channel', 'bmnum', 'bmazm', 'scan', 'offset', 'rxrise',\
+        'intt.sc', 'intt.us', 'txpl', 'mpinc', 'mppul', 'mplgs', 'nrang', 'frang', 'rsep', 'xcf',\
+        'tfreq', 'mxpwr', 'lvmax', 'rawacf.revision.major', 'rawacf.revision.minor', 'combf']
+
+RAWACF_VECTORS = ['ptab', 'ltab', 'slist', 'pwr0']
 
 class LombFit:
     def __init__(self, record):
@@ -64,8 +81,6 @@ class LombFit:
         self.bmnum = self.rawacf['bmnum'] # beam number
         self.recordtime = datetime.datetime(self.rawacf['time.yr'], self.rawacf['time.mo'], self.rawacf['time.dy'], self.rawacf['time.hr'], self.rawacf['time.mt'], self.rawacf['time.sc'], self.rawacf['time.us']) 
         
-        # TODO: copy over pwr0, ltab, ptab, slist, nlag
-        
         # calculate max decay rate for MAX_W spectral width
         amax = (MAX_W) / (C / (self.tfreq * 1e3 * 2 * np.pi))
 
@@ -87,7 +102,7 @@ class LombFit:
         # threshold on power (snr), spectral width std error m/s, and velocity std error m/s for quality flag
         self.qwle_thresh = 80
         self.qvle_thresh = 80
-        self.qpwr_thresh = .2
+        self.qpwr_thresh = 2
     
         # thresholds on velocity and spectral width for ionospheric scatter flag (m/s)
         self.wimin_thresh = 100
@@ -125,11 +140,54 @@ class LombFit:
         self.iflg       = np.zeros([self.nranges, self.maxfreqs])
         self.qflg       = np.zeros([self.nranges, self.maxfreqs])
        
+        self.nlag       = np.zeros([self.nranges])
+        
         self.CalcBadlags()
-    
-    # writes out a record of the lss fit
-    def WriteLSSFit(self):
-        pass         
+
+    # appends a record of the lss fit to an hdf5 file
+    def WriteLSSFit(self, hdf5file):
+        # create a group for /[beam number]/[record time]
+        groupname = str(self.bmnum) + '/' + str(self.recordtime)
+        grp = hdf5file.create_group(groupname)
+               
+        # add scalars as attributes to group
+        for attr in GROUP_ATTRS:
+            grp.attrs[attr] = self.rawacf[attr]
+        
+        grp.attrs['fitlomb.revision.major'] = FITLOMB_REVISION_MAJOR 
+        grp.attrs['fitlomb.revision.minor'] = FITLOMB_REVISION_MINOR
+        grp.attrs['origin.code'] = ORIGIN_CODE # TODO: ADD ARGUEMENTS
+        grp.attrs['origin.time'] = str(datetime.datetime.now())
+        grp.attrs['rawacf.origin.code'] = self.rawacf['origin.code']
+        grp.attrs['rawacf.origin.time'] = self.rawacf['origin.time']
+        # TODO: SET THE FOLLOWING
+        grp.attrs['noise.sky'] = 0 # sky noise? 
+        grp.attrs['noise.lag0'] = 0 # lag zero power from noise acf?
+        grp.attrs['noise.vel'] = 0 # velocity from fitting noise acf?
+        grp.attrs['thr'] = 0 # wtf is this?
+        
+        # copy relevant vectors from rawacf
+        for v in RAWACF_VECTORS:
+            d = hdf5file.create_dataset(groupname + '/' + v, data = self.rawacf[v], compression = DSET_COMPRESSION)
+
+        
+        hdf5file.create_dataset(groupname + '/qflg', data = self.qflg, compression = DSET_COMPRESSION)
+        hdf5file.create_dataset(groupname + '/gflg', data = self.gflg, compression = DSET_COMPRESSION)
+        hdf5file.create_dataset(groupname + '/iflg', data = self.iflg, compression = DSET_COMPRESSION)
+
+        hdf5file.create_dataset(groupname + '/p_l', data = self.p_l, compression = DSET_COMPRESSION)
+        hdf5file.create_dataset(groupname + '/p_l_e', data = self.p_l_e, compression = DSET_COMPRESSION)
+        hdf5file.create_dataset(groupname + '/w_l', data = self.w_l, compression = DSET_COMPRESSION)
+        hdf5file.create_dataset(groupname + '/w_l_e', data = self.w_l_e, compression = DSET_COMPRESSION)
+        hdf5file.create_dataset(groupname + '/v_l', data = self.v_l, compression = DSET_COMPRESSION)
+        hdf5file.create_dataset(groupname + '/v_l_e', data = self.v_l_e, compression = DSET_COMPRESSION)
+        
+        hdf5file.create_dataset(groupname + '/nlag',data = self.nlag, compression = DSET_COMPRESSION)
+
+        # TODO: verify that the following vectors are not relevant for fitlomb: phi0, phi0_e, sd_l, sd_s, sd_phi
+
+        # add fitlomb specific attributtes and datasets
+        # add seconds from epoch 
 
     # calculates FitACF-like parameters for each peak in the spectrum
     # processes the pulse (move it __init__)?
@@ -144,8 +202,9 @@ class LombFit:
         job_server = pp.Server()#ppservers=("137.229.27.61",""))
         
         # prepare sample and time arrays 
-        times_samples = [(self._CalcSamples(r)) for r in self.ranges]
 
+        times_samples = [(self._CalcSamples(r)) for r in self.ranges]
+        self.nlag[:] = [len(samps[0]) for samps in times_samples]
         
         jobs = []
         
@@ -185,7 +244,7 @@ class LombFit:
 
         t = (np.array(lags) * self.t_pulse / 1e6)[good_lags == True]
         samples = i_lags + 1j * q_lags
-
+        
         return t, samples
 
 
@@ -249,9 +308,6 @@ class LombFit:
                 self.p_s[rgate].append(popt[POW_IDX])
                 self.p_s_e[rgate].append(pcov[POW_IDX][POW_IDX])
             '''
-# TODO: determine meaning for v_s, and v_s_e.. pick highest snr velocity for gate?
-#        self.v_s[rgate].append(popt[DF_IDX] + freqs[peakidx])
-#        self.v_s_e[rgate].append(pcov[DF_IDX][DF_IDX])
            
     def PlotPeak(self, rgate):
         for (i,fit) in enumerate(self.lfits[rgate]):
@@ -275,10 +331,8 @@ class LombFit:
             plt.ylabel('SNR')
 
         plt.show()
-    
-    # TODO: investigate adding bad lags detection
-    # uses https://github.com/jspaleta/SuperDARN_MSI_ROS/blob/d925b7740e6a95c0e1b653a08bf8967361eb46f8/linux/home/radar/ros.3.6/codebase/superdarn/src.lib/tk/fitacf.2.5/src/badlags.c
-    # by looking at spikes in power?
+
+
     def CalcBadlags(self):
         bad_lags = [[] for i in range(self.nranges)]
         
@@ -299,13 +353,9 @@ class LombFit:
                 
                 lagpowers = abs(samples) ** 2
                 bad_lags[rgate] += (lagpowers > lagpowers[0])# add interference lags
-                #plt.plot(lagpowers * bad_lags[rgate])
-                #plt.show()
             else:
                 print 'bad lag in lag zero... gate: ' + str(rgate)
-        self.bad_lags = bad_lags
-
-
+        self.bad_lags = bad_lags 
 
 def PlotMixed(lomb):
     ionospheric_scatter = np.sum(lomb.iflg * lomb.qflg, axis=1) > 0
@@ -315,7 +365,7 @@ def PlotMixed(lomb):
         for mixed in mixed_scatter:
             lomb.PlotPeak(mixed)
 
-
+# TODO: break out repeated code for PLOT[x]RTI
 # replicate rti-style plot 
 # plot w_l, p_l, and v_ms of main peak as a function of time
 # adapted from jef's plot-rti.py
@@ -435,14 +485,15 @@ if __name__ == '__main__':
 
     times = dfile.times
     cubecache = TimeCube()
-    
+    hdf5file = h5py.File('test.hdf5', 'w')
+
     lombfits = []
     for (i,t) in enumerate(times):
         if(dfile[t]['bmnum'] != 9):
             continue
-        if(i < 96 * 60 / 3.):
+        if(i < 0.):
             continue
-        if(i > 101 * 60 / 3.):
+        if(i > 5.):
             break
         print i
         print 'processing time ' + str(t)
@@ -450,9 +501,9 @@ if __name__ == '__main__':
         
         fit.ParallelProcessPulse()
         #fit.ProcessPulse(cubecache) # note: debugging is easier with the non-parallel version..
-        lombfits.append(fit)
+        fit.WriteLSSFit(hdf5file)
+
+    hdf5file.close() 
     
-    pickle.dump(lombfits, open('beam9_kod_cwhaarp.p', 'wb'))
     del dfile
-    #PlotRTI(lombfits, 9)
     
