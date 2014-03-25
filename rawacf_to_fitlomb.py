@@ -272,9 +272,8 @@ class LombFit:
                 #self.w_l[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.t_pulse * 1e-6) * (self.tfreq * 1e3)) 
                 self.w_l[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.tfreq * 1e3)) 
 
-                dalpha = self.alfs[1] - self.alfs[0]
                 # approximate alpha error by taking half of range of alphas covered in fwhm
-                self.w_l_e[rgate,i] = fit['alpha_fwhm'] * dalpha / FWHM_TO_SIGMA
+                self.w_l_e[rgate,i] = fit['alpha_fwhm'] / FWHM_TO_SIGMA
                 
                 # amplitude estimation, see bayesian analysis v: amplitude estimation, multiple well separated sinusoids
                 # bretthorst, equation 78, I'm probably doing this wrong...
@@ -286,8 +285,7 @@ class LombFit:
                 self.v_l[rgate,i] = v_l
                 # approximate velocity error as half the range of velocities covered by fwhm 
                 # "nonuniform sampling: bandwidth and aliasing", page 25
-                _df = self.freqs[1] - self.freqs[0]
-                self.v_l_e[rgate,i] = (((fit['frequency_fwhm'] * _df) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA
+                self.v_l_e[rgate,i] = (((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA
                 
                 # for information on setting surface/ionospheric scatter thresholds, see
                 # A new approach for identifying ionospheric backscatterin midlatitude SuperDARN HF radar observations

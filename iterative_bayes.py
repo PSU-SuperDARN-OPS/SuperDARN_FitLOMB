@@ -167,9 +167,9 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     fit['amplitude'] = (R_f[max_tuple] + I_f[max_tuple]) / CS_f[max_tuple] 
     fit['amplitude_error_unscaled'] = CS_f[max_tuple]
     fit['frequency'] = f[max_tuple[1]]
-    fit['frequency_fwhm'] = freq_fwhm 
-    fit['alpha'] = alfs[max_tuple[0]]
-    fit['alpha_fwhm'] = alf_fwhm
+    fit['frequency_fwhm'] = freq_fwhm * (freq_slice[1] - freq_slice[0])
+    fit['alpha'] = alfs[max_tuple[0]] 
+    fit['alpha_fwhm'] = alf_fwhm * (alf_slice[1] - alf_slice[0])
     fit['samples'] = s.copy()
     fit['t'] = t.copy()
     fit['signal'] = fit['amplitude'] * np.exp(1j * 2 * np.pi * fit['frequency'] * t) * np.exp(-fit['alpha'] * t)
