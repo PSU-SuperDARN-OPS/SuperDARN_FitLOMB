@@ -9,7 +9,7 @@ from complex_lomb import *
 
 from timecube import TimeCube, make_spacecube
 
-import datetime
+import datetime, calendar
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as dates
@@ -20,7 +20,7 @@ from scipy.optimize import curve_fit
 import scipy.signal as signal
 import pp
 
-from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes
+from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes, calc_zoomvar
 
 FITLOMB_REVISION_MAJOR = 0
 FITLOMB_REVISION_MINOR = 0
@@ -40,8 +40,8 @@ MAX_V = 1000 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 2000 # m/s, max spectral width to include in lomb 
 C = 3e8
 
-ALPHA_RES = 5 # m/s
-FREQ_RES = 5 # m/s
+ALPHA_RES = 25 # m/s
+VEL_RES = 25 # m/s
 
 VEL_CMAP = plt.cm.RdBu
 FREQ_CMAP = plt.cm.spectral
@@ -85,10 +85,10 @@ class LombFit:
         amax = (MAX_W) / (C / (self.tfreq * 1e3 * 2 * np.pi))
 
         # calculate max frequency either nyquist rate, or calculated off max velocity
-        fmax = (MAX_V * 2 * (self.tfreq * 1e3)) / C
         nyquist = 1 / (2e-6 * self.t_pulse)
-
-        self.freqs = np.linspace(max(-nyquist, -fmax),min(nyquist, fmax), self.nlags * 30)
+        fmax = min((MAX_V * 2 * (self.tfreq * 1e3)) / C, nyquist)
+        df = (VEL_RES * 2.) * (self.tfreq * 1e3) / C
+        self.freqs = np.linspace(-fmax,fmax, 2. * fmax / df)
         
         self.maxalf = amax
         self.alfsteps = int(amax / ALPHA_RES)
@@ -158,6 +158,7 @@ class LombFit:
         grp.attrs['fitlomb.revision.minor'] = FITLOMB_REVISION_MINOR
         grp.attrs['origin.code'] = ORIGIN_CODE # TODO: ADD ARGUEMENTS
         grp.attrs['origin.time'] = str(datetime.datetime.now())
+        grp.attrs['epoch.time'] = calendar.timegm(self.recordtime.timetuple()) + int(self.rawacf['time.us'])/1e6
         grp.attrs['rawacf.origin.code'] = self.rawacf['origin.code']
         grp.attrs['rawacf.origin.time'] = self.rawacf['origin.time']
         # TODO: SET THE FOLLOWING
@@ -187,8 +188,6 @@ class LombFit:
         # TODO: verify that the following vectors are not relevant for fitlomb: phi0, phi0_e, sd_l, sd_s, sd_phi
 
         # add fitlomb specific attributtes and datasets
-        # add seconds from epoch 
-
     # calculates FitACF-like parameters for each peak in the spectrum
     # processes the pulse (move it __init__)?
     def ProcessPulse(self, cubecache):
@@ -196,6 +195,10 @@ class LombFit:
             peaks = self.CalculatePeaks(r, cubecache)
         self.ProcessPeaks()
     
+    # TODO: move FitACF compare function from plot_pickle to here
+    def FitACFCompare(self, fitacffile):
+        pass
+
     # TODO: work with non-lambda env models
     def ParallelProcessPulse(self, cubecache = False):
         # create pp job server
@@ -210,7 +213,7 @@ class LombFit:
         
         # dispatch jobs
         libs = ("numpy as np", "numexpr as ne", "timecube", "iterative_bayes")
-        funcs = (make_spacecube, TimeCube, find_fwhm, calculate_bayes)
+        funcs = (make_spacecube, TimeCube, find_fwhm, calculate_bayes, calc_zoomvar)
 
         for r in self.ranges:
             args = (times_samples[r][1], times_samples[r][0], self.freqs, self.alfs, 1, self.maxfreqs, cubecache)
@@ -354,7 +357,7 @@ class LombFit:
                 lagpowers = abs(samples) ** 2
                 bad_lags[rgate] += (lagpowers > lagpowers[0])# add interference lags
             else:
-                print 'bad lag in lag zero... gate: ' + str(rgate)
+                pass #print 'bad lag in lag zero... gate: ' + str(rgate)
         self.bad_lags = bad_lags 
 
 def PlotMixed(lomb):
@@ -469,33 +472,36 @@ def PlotPRTI(lombfits, beam):
 
 
 if __name__ == '__main__':
-    import pickle
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
     parser.add_argument("--verbose", help="increase output verbosity", action="store_true")
     parser.add_argument("--infile", help="input RawACF file to convert")
     parser.add_argument("--outfile", help="output FitLSS file")
+    parser.add_argument("--starttime", help="input RawACF file to convert")
+    parser.add_argument("--endtime", help="input RawACF file to convert")
     
     args = parser.parse_args() 
 
     # good time at McM is 3/20/2013, 8 AM UTC
     #infile = '/mnt/windata/sddata/0207/all.rawacf'
-    infile = '20140324.1600.04.kod.c.rawacf'#'20140318.2000.01.kod.c.rawacf'#'20140318.0200.04.kod.c.rawacf'#'20140320.2200.03.kod.c.rawacf'#20140319.2215.03.kod.c.rawacf' #'20130320.0801.00.mcm.a.rawacf' #20130320.0801.00.mcm.a.rawacf'#'20130320.0801.00.mcm.a.rawacf'
+    # todo: add converging fits
+    infile = '20130320.0801.00.mcm.a.rawacf'#'20140324.1600.04.kod.c.rawacf' 
     dfile = DMapFile(files=[infile])
-
+    outfilename  = infile.rstrip('.bz2').rstrip('.rawacf') + '.fitlomb.hdf5'
     times = dfile.times
     cubecache = TimeCube()
-    hdf5file = h5py.File('test.hdf5', 'w')
+
+    hdf5file = h5py.File(outfilename, 'w')
 
     lombfits = []
     for (i,t) in enumerate(times):
-        if(dfile[t]['bmnum'] != 9):
+        '''    if(dfile[t]['bmnum'] != 9):
             continue
-        if(i < 0.):
+        if t < datetime.datetime(2014, 3, 24, 17, 30):
             continue
-        if(i > 5.):
-            break
-        print i
+        if t > datetime.datetime(2014, 3, 24, 17, 55):
+            break'''
+
         print 'processing time ' + str(t)
         fit = LombFit(dfile[t])
         

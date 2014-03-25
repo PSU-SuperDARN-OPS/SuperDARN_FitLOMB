@@ -75,7 +75,7 @@ def find_fwhm(ia, pt_apex,log = True,factor=.5,da=1):
 # returns fit, with model parameters, a frequency, and a significance
 # for simultaneous complex samples, normalized frequency, ts normalized to 1s
 #@profile
-def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = False):
+def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = False, zoom = 10., zoomspan = 5):
     fits = []
     cubecache = False
     if not cubecache:
@@ -84,10 +84,29 @@ def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = Fa
         timecube = False
 
     for i in range(maxfreqs):
+        # calculate initial fit
         fit = calculate_bayes(samples, t, freqs, alfs, env_model, cubecache = cubecache, timecube = timecube)
+        
+        if zoom:
+            # this may disrupt fwhm calculations
+            # zoom frequency range in on fit, recalculate bayes for increased resolution
+            # don't cache zoomed timecubes
+            zfreqs = calc_zoomvar(freqs, fit['frequency'], zoomspan, zoom)
+            zalfs = calc_zoomvar(freqs, fit['alpha'], zoomspan, zoom)
+            zoomcube = (make_spacecube(t, zfreqs, zalfs, env_model))
+            fit = calculate_bayes(samples, t, zfreqs, zalfs, env_model, cubecache = False, timecube = zoomcube)
+
         fits.append(fit)
         samples -= fit['signal']
     return fits
+
+# calculates zoomed parameters
+def calc_zoomvar(ar, center, zoomspan, zoom):
+    da = ar[1] - ar[0]
+    znar = zoomspan * zoom
+    za0 = center - da * zoomspan / 2.
+    za1 = center + da * zoomspan / 2.
+    return np.linspace(max(za0, ar[0]), min(za1, ar[-1]), znar)
 
 # to profile:
 # kernprof.py -l foo.py
