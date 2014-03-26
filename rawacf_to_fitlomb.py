@@ -1,6 +1,8 @@
 # jon klein, jtklein@alaska.
-
+# functions to calculate a fitlomb (generalized lomb-scargle peridogram) from a rawacf
+# parallized with python pp, possible to parallelize over the network
 # mit license
+
 import argparse
 
 from sd_data_tools import *
@@ -92,7 +94,7 @@ class LombFit:
         
         self.maxalf = amax
         self.alfsteps = int(amax / ALPHA_RES)
-        self.maxfreqs = 3
+        self.maxfreqs = 2
         self.alfs = np.linspace(0, self.maxalf, self.alfsteps)
 
         # thresholds on velocity and spectral width for surface scatter flag (m/s)
@@ -366,109 +368,6 @@ def PlotMixed(lomb):
         for mixed in mixed_scatter:
             lomb.PlotPeak(mixed)
 
-# TODO: break out repeated code for PLOT[x]RTI
-# replicate rti-style plot 
-# plot w_l, p_l, and v_ms of main peak as a function of time
-# adapted from jef's plot-rti.py
-def PlotVRTI(lombfits, beam):
-    # assemble pulse time list
-    times = [fit.recordtime for fit in lombfits]
-    maxfreqs = lombfits[0].maxfreqs
-    ranges = [lf.nranges for lf in lombfits]
-    velocity = np.zeros([len(times), max(ranges)])
-    for i in range(maxfreqs):
-        plt.subplot(maxfreqs, 1, i+1)
-        # assemble velocity list, collect velocity at beam number
-        for (t,pulse) in enumerate(lombfits):
-            if pulse.bmnum != beam:
-                continue
-            velocity[t,:] = np.concatenate((pulse.v_l[:,i] * pulse.qflg[:,i], np.zeros(max(ranges) - pulse.nranges)))
-
-        x = dates.date2num(times)
-        y = np.array(np.arange(max(ranges))) * pulse.rsep
-
-        plt.pcolor(x, y, velocity.T, cmap = VEL_CMAP)
-        plt.clim([-800,800])
-        plt.axis([x.min(), x.max(), y.min(), y.max()])
-        #plt.axis([x.min(), x.max(), y.min(), y.max()])
-        plt.grid(True)
-        plt.colorbar()
-        ax = plt.gca()
-
-        locator = dates.AutoDateLocator()
-        dateformatter = dates.AutoDateFormatter(locator)
-
-        ax.xaxis.set_major_locator(locator) 
-        ax.xaxis.set_major_formatter(dateformatter)
-    plt.show()
-
-
-def PlotWRTI(lombfits, beam):
-    # assemble pulse time list
-    times = [fit.recordtime for fit in lombfits]
-    maxfreqs = lombfits[0].maxfreqs
-    ranges = [lf.nranges for lf in lombfits]
-    widths = np.zeros([len(times), max(ranges)])
-    for i in range(maxfreqs):
-        plt.subplot(maxfreqs, 1, i+1)
-        # assemble velocity list, collect velocity at beam number
-        for (t,pulse) in enumerate(lombfits):
-            if pulse.bmnum != beam:
-                continue
-            widths[t,:] = np.concatenate((pulse.w_l[:,i] * pulse.qflg[:,i], np.zeros(max(ranges) - pulse.nranges)))
-
-        x = dates.date2num(times)
-        y = np.array(np.arange(max(ranges))) * pulse.rsep
-        plt.pcolor(x, y, widths.T, cmap = SPECW_CMAP)
-        plt.clim([0,1500])
-        plt.axis([x.min(), x.max(), y.min(), y.max()])
-        #plt.axis([x.min(), x.max(), y.min(), y.max()])
-        plt.grid(True)
-        plt.colorbar()
-        ax = plt.gca()
-
-        locator = dates.AutoDateLocator()
-        dateformatter = dates.AutoDateFormatter(locator)
-
-        ax.xaxis.set_major_locator(locator) 
-        ax.xaxis.set_major_formatter(dateformatter)
-    plt.show()
-
-
-def PlotPRTI(lombfits, beam):
-    # assemble pulse time list
-    times = [fit.recordtime for fit in lombfits]
-    maxfreqs = lombfits[0].maxfreqs
-
-    ranges = [lf.nranges for lf in lombfits]
-    powers = np.zeros([len(times), max(ranges)])
-    for i in range(maxfreqs):
-        plt.subplot(maxfreqs, 1, i+1)
-        # assemble velocity list, collect velocity at beam number
-        for (t,pulse) in enumerate(lombfits):
-            if pulse.bmnum != beam:
-                continue
-            powers[t,:] = np.concatenate((pulse.p_l[:,i] * pulse.qflg[:,i], np.zeros(max(ranges) - pulse.nranges)))
-
-        x = dates.date2num(times)
-        y = np.array(np.arange(max(ranges))) * pulse.rsep
-
-        plt.pcolor(x, y, powers.T, cmap = SPECW_CMAP)
-        plt.clim([0,50])
-        plt.axis([x.min(), x.max(), y.min(), y.max()])
-        #plt.axis([x.min(), x.max(), y.min(), y.max()])
-        plt.grid(True)
-        plt.colorbar()
-        ax = plt.gca()
-
-        locator = dates.AutoDateLocator()
-        dateformatter = dates.AutoDateFormatter(locator)
-
-        ax.xaxis.set_major_locator(locator) 
-        ax.xaxis.set_major_formatter(dateformatter)
-    plt.show()
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
@@ -483,7 +382,7 @@ if __name__ == '__main__':
     # good time at McM is 3/20/2013, 8 AM UTC
     #infile = '/mnt/windata/sddata/0207/all.rawacf'
     # todo: add converging fits
-    infile = '20130320.0801.00.mcm.a.rawacf'#'20140324.1600.04.kod.c.rawacf' 
+    infile = '20140324.1600.04.kod.c.rawacf' 
     dfile = DMapFile(files=[infile])
     outfilename  = infile.rstrip('.bz2').rstrip('.rawacf') + '.fitlomb.hdf5'
     times = dfile.times
@@ -493,18 +392,20 @@ if __name__ == '__main__':
 
     lombfits = []
     for (i,t) in enumerate(times):
-        '''    if(dfile[t]['bmnum'] != 9):
+        if(dfile[t]['bmnum'] != 9):
             continue
         if t < datetime.datetime(2014, 3, 24, 17, 30):
             continue
         if t > datetime.datetime(2014, 3, 24, 17, 55):
-            break'''
+            break
 
         print 'processing time ' + str(t)
         fit = LombFit(dfile[t])
         
-        #fit.ParallelProcessPulse()
-        fit.ProcessPulse(cubecache) # note: debugging is easier with the non-parallel version..
+        fit.ParallelProcessPulse()
+        # alternately, use non-parallelized version (easier to debug/optimize)
+        #fit.ProcessPulse(cubecache)
+
         fit.WriteLSSFit(hdf5file)
 
     hdf5file.close() 

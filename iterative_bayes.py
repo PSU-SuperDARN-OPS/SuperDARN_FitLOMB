@@ -15,13 +15,12 @@ import pdb
 from timecube import TimeCube, make_spacecube
 VERBOSE = False 
 
-# modified from jef spaleta's code..
-# -added variable "half" factor (for working with logs)
+# fwhm modified from jef spaleta's code..
+# -added variable "half" factor (for working with log values)
 # may be better to fit a spline
 # (see http://stackoverflow.com/questions/10582795/finding-the-full-width-half-maximum-of-a-peak)
 # however, this would assume that a spline is a good model, that approach may break with multiple peaks
 # I'm not convinced that this approach is valid for peaks near edges (near DC or high frequencies, or high or low decay rates)
-
 def find_fwhm(ia, pt_apex,log = True,factor=.5,da=1):
   if log:
     factor = (ia[pt_apex] + np.log10(factor))/(ia[pt_apex])
