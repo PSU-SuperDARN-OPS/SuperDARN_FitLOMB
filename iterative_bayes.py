@@ -9,6 +9,7 @@
 
 import numpy as np
 import numexpr as ne
+import pdb
 
 # look into numexpr
 from timecube import TimeCube, make_spacecube
@@ -26,6 +27,7 @@ def find_fwhm(ia, pt_apex,log = True,factor=.5,da=1):
     factor = (ia[pt_apex] + np.log10(factor))/(ia[pt_apex])
   
   fwhm=0.0
+  bounded = 2
 
   if pt_apex > 0 and pt_apex < ia.size-1:
     right_slice = ia[pt_apex:len(ia)-1:1]
@@ -33,6 +35,7 @@ def find_fwhm(ia, pt_apex,log = True,factor=.5,da=1):
     i=0
     for i in xrange(len(right_slice)):
       if right_slice[i] < float(searcher)*factor:
+        bounded -= 1
         break
     i=max(1,i)
     left_slice = ia[pt_apex:0:-1]
@@ -40,6 +43,7 @@ def find_fwhm(ia, pt_apex,log = True,factor=.5,da=1):
     j=0
     for j in xrange(len(left_slice)):
       if left_slice[j] < float(searcher)*factor:
+        bounded -= 1
         break
     j=max(1,j)
     fwhm=(i+j)*da
@@ -62,7 +66,7 @@ def find_fwhm(ia, pt_apex,log = True,factor=.5,da=1):
     j=max(1,j)
     fwhm=(2*j)*da
 
-  return fwhm
+  return fwhm, bounded
 
 # calcuates the peak frequency component using bayesian analysis given complex samples, an envelope model, and sample times
 # returns model parameters?
@@ -82,19 +86,28 @@ def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = Fa
         timecube = (make_spacecube(t, freqs, alfs, env_model))
     else:
         timecube = False
-
+    
     for i in range(maxfreqs):
         # calculate initial fit
         fit = calculate_bayes(samples, t, freqs, alfs, env_model, cubecache = cubecache, timecube = timecube)
-        
+         
         if zoom:
             # this may disrupt fwhm calculations
             # zoom frequency range in on fit, recalculate bayes for increased resolution
             # don't cache zoomed timecubes
+            coarsefwhm_f = fit['frequency_fwhm']
+            coarsefwhm_a = fit['alpha_fwhm']
+
             zfreqs = calc_zoomvar(freqs, fit['frequency'], zoomspan, zoom)
             zalfs = calc_zoomvar(freqs, fit['alpha'], zoomspan, zoom)
             zoomcube = (make_spacecube(t, zfreqs, zalfs, env_model))
             fit = calculate_bayes(samples, t, zfreqs, zalfs, env_model, cubecache = False, timecube = zoomcube)
+
+            # use old fwhm if fwhm was bounded by zoom level, revert to old fwhm (it wasn't a good fit anyways..)
+            if fit['frequency_fwhm_bounded']:
+                fit['frequency_fwhm'] = coarsefwhm_f
+            if fit['alpha_fwhm_bounded']:
+                fit['alpha_fwhm'] = coarsefwhm_a
 
         fits.append(fit)
         samples -= fit['signal']
@@ -160,16 +173,18 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     alf_slice = P_f[max_tuple[0],:]
     freq_slice = P_f[:,max_tuple[1]]
 
-    alf_fwhm = find_fwhm(alf_slice, max_tuple[1])
-    freq_fwhm = find_fwhm(freq_slice, max_tuple[0])
+    alf_fwhm, a_fwhm_bounded = find_fwhm(alf_slice, max_tuple[1])
+    freq_fwhm, f_fwhm_bounded = find_fwhm(freq_slice, max_tuple[0])
 
     fit = {}
     fit['amplitude'] = (R_f[max_tuple] + I_f[max_tuple]) / CS_f[max_tuple] 
     fit['amplitude_error_unscaled'] = CS_f[max_tuple]
     fit['frequency'] = f[max_tuple[1]]
-    fit['frequency_fwhm'] = freq_fwhm * (freq_slice[1] - freq_slice[0])
+    fit['frequency_fwhm'] = freq_fwhm * abs(freq_slice[1] - freq_slice[0])
+    fit['frequency_fwhm_bounded'] = f_fwhm_bounded
     fit['alpha'] = alfs[max_tuple[0]] 
-    fit['alpha_fwhm'] = alf_fwhm * (alf_slice[1] - alf_slice[0])
+    fit['alpha_fwhm'] = alf_fwhm * abs(alf_slice[1] - alf_slice[0])
+    fit['alpha_fwhm_bounded'] = a_fwhm_bounded
     fit['samples'] = s.copy()
     fit['t'] = t.copy()
     fit['signal'] = fit['amplitude'] * np.exp(1j * 2 * np.pi * fit['frequency'] * t) * np.exp(-fit['alpha'] * t)

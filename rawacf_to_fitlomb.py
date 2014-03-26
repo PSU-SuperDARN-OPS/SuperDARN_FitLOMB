@@ -503,8 +503,8 @@ if __name__ == '__main__':
         print 'processing time ' + str(t)
         fit = LombFit(dfile[t])
         
-        fit.ParallelProcessPulse()
-        #fit.ProcessPulse(cubecache) # note: debugging is easier with the non-parallel version..
+        #fit.ParallelProcessPulse()
+        fit.ProcessPulse(cubecache) # note: debugging is easier with the non-parallel version..
         fit.WriteLSSFit(hdf5file)
 
     hdf5file.close() 
