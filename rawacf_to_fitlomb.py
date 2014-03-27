@@ -27,7 +27,7 @@ from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes, calc_zo
 FITLOMB_REVISION_MAJOR = 0
 FITLOMB_REVISION_MINOR = 0
 ORIGIN_CODE = 'rawacf_to_fitlomb.py'
-
+DATA_DIR = './data/'
 DSET_COMPRESSION = 'gzip'
 
 I_OFFSET = 0
@@ -188,7 +188,6 @@ class LombFit:
         hdf5file.create_dataset(groupname + '/nlag',data = self.nlag, compression = DSET_COMPRESSION)
 
         # TODO: verify that the following vectors are not relevant for fitlomb: phi0, phi0_e, sd_l, sd_s, sd_phi
-
         # add fitlomb specific attributtes and datasets
     # calculates FitACF-like parameters for each peak in the spectrum
     # processes the pulse (move it __init__)?
@@ -297,21 +296,20 @@ class LombFit:
                     self.gflg[rgate,i] = 1
                 
                 # set qflg if .. signal to noise ratios are high enough, not stuck 
-                if self.p_l[rgate,i] > self.qpwr_thresh and self.w_l_e[rgate,i] < self.qwle_thresh and self.v_l_e[rgate, i] < self.qvle_thresh:
+                if self.p_l[rgate,i] > self.qpwr_thresh and \
+                        self.w_l_e[rgate,i] < self.qwle_thresh and \
+                        self.v_l_e[rgate, i] < self.qvle_thresh and \
+                        self.w_l[rgate, i] < self.wimax_thresh and \
+                        self.v_l[rgate, i] < self.vimax_thresh and \
+                        self.w_l[rgate, i] > -self.wimax_thresh and \
+                        self.v_l[rgate, i] > -self.vimax_thresh:
                     self.qflg[rgate,i] = 1
 
-            '''
-            for (i, fit) in enum(self.sfits[rgate]):
-                # calculate "sigma" parameters
-                self.sd_l[rgate].append(pcov[DECAY_IDX][DECAY_IDX]) # TODO: what is sd_l (standard deviation of sigma?)
+                # scale p_l by 10 * log10 to match fitacf
+                self.p_l = 10 * np.log10(self.p_l)
 
-                self.w_s[rgate].append(popt[DECAY_IDX])
-                self.w_s_e[rgate].append(pcov[DECAY_IDX][DECAY_IDX])
-
-                self.p_s[rgate].append(popt[POW_IDX])
-                self.p_s_e[rgate].append(pcov[POW_IDX][POW_IDX])
-            '''
-           
+                # TODO: also calculate "sigma" parameters
+                           
     def PlotPeak(self, rgate):
         for (i,fit) in enumerate(self.lfits[rgate]):
             plt.subplot(len(self.lfits[rgate]),1,i+1)
@@ -357,7 +355,8 @@ class LombFit:
                 lagpowers = abs(samples) ** 2
                 bad_lags[rgate] += (lagpowers > lagpowers[0])# add interference lags
             else:
-                pass #print 'bad lag in lag zero... gate: ' + str(rgate)
+                # TODO:!!!
+                pass 
         self.bad_lags = bad_lags 
 
 def PlotMixed(lomb):
@@ -382,22 +381,27 @@ if __name__ == '__main__':
     # good time at McM is 3/20/2013, 8 AM UTC
     #infile = '/mnt/windata/sddata/0207/all.rawacf'
     # todo: add converging fits
-    infile = '20140324.1600.04.kod.c.rawacf' 
-    dfile = DMapFile(files=[infile])
-    outfilename  = infile.rstrip('.bz2').rstrip('.rawacf') + '.fitlomb.hdf5'
+    dfile = DMapFile(files=[args.infile])
+
+    if not args.outfile:
+        outfilename  = args.infile.split('/')[-1].rstrip('.bz2').rstrip('rawacf').rstrip('.') + '.fitlomb.hdf5'
+
+    else:
+        outfilename = args.outfile
+
     times = dfile.times
     cubecache = TimeCube()
-
-    hdf5file = h5py.File(outfilename, 'w')
+    print DATA_DIR + outfilename
+    hdf5file = h5py.File(DATA_DIR + outfilename, 'w')
 
     lombfits = []
     for (i,t) in enumerate(times):
-        if(dfile[t]['bmnum'] != 9):
-            continue
-        if t < datetime.datetime(2014, 3, 24, 17, 30):
-            continue
-        if t > datetime.datetime(2014, 3, 24, 17, 55):
-            break
+        #if(dfile[t]['bmnum'] != 9):
+        #    continue
+        #if t < datetime.datetime(2014, 3, 24, 17, 30):
+        #    continue
+        #if t > datetime.datetime(2014, 3, 24, 17, 55):
+        #    break
 
         print 'processing time ' + str(t)
         fit = LombFit(dfile[t])
