@@ -29,13 +29,10 @@ FITLOMB_REVISION_MINOR = 0
 ORIGIN_CODE = 'rawacf_to_fitlomb.py'
 DATA_DIR = './data/'
 DSET_COMPRESSION = 'gzip'
+FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
 
 I_OFFSET = 0
 Q_OFFSET = 1
-
-DECAY_IDX = 0
-POW_IDX = 1
-DF_IDX = 2
 
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 1000 # m/s, max velocity (doppler shift) to include in lomb
@@ -156,8 +153,10 @@ class LombFit:
         for attr in GROUP_ATTRS:
             grp.attrs[attr] = self.rawacf[attr]
         
+        grp.attrs['readme'] = FITLOMB_README
         grp.attrs['fitlomb.revision.major'] = FITLOMB_REVISION_MAJOR 
         grp.attrs['fitlomb.revision.minor'] = FITLOMB_REVISION_MINOR
+        grp.attrs['fitlomb.bayes.iterations'] = self.maxfreqs 
         grp.attrs['origin.code'] = ORIGIN_CODE # TODO: ADD ARGUEMENTS
         grp.attrs['origin.time'] = str(datetime.datetime.now())
         grp.attrs['epoch.time'] = calendar.timegm(self.recordtime.timetuple()) + int(self.rawacf['time.us'])/1e6
@@ -333,7 +332,7 @@ class LombFit:
 
         plt.show()
 
-
+    # calculate and store bad lags
     def CalcBadlags(self):
         bad_lags = [[] for i in range(self.nranges)]
         
@@ -355,8 +354,9 @@ class LombFit:
                 lagpowers = abs(samples) ** 2
                 bad_lags[rgate] += (lagpowers > lagpowers[0])# add interference lags
             else:
-                # TODO:!!!
+                # if lag zero is bad, we can't filter out lags greater than lag zero because we don't know what it is..
                 pass 
+
         self.bad_lags = bad_lags 
 
 def PlotMixed(lomb):
