@@ -76,7 +76,12 @@ def createMergefile(radar, day, datadir):
         for beam in f:
             for pulse in f[beam]:
                 dset = beam + '/' + pulse 
+                pdb.set_trace()
+                f[dset].attrs['nrang'] = f[beam].attrs['nrang']
+                f[dset].attrs['frang'] = f[beam].attrs['frang']
+                f[dset].attrs['rsep'] = f[beam].attrs['rsep']
                 mergefile[dset] = h5py.ExternalLink(h5f.split('/')[-1], dset)
+
 
         f.close()
     mergefile.close()

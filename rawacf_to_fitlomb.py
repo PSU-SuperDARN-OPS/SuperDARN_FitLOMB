@@ -50,8 +50,7 @@ POWER_CMAP = plt.cm.jet
 BEAM_ATTRS = ['radar.revision.major', 'radar.revision.minor',\
         'origin.command', 'cp', 'stid', \
         'rawacf.revision.major', 'rawacf.revision.minor',\
-        'intt.sc', 'intt.us', 'txpl', 'mpinc', 'mppul', 'mplgs', 'nrang', 'frang', 'rsep', 'xcf',\
-        'rawacf.revision.major', 'rawacf.revision.minor']
+        'intt.sc', 'intt.us', 'txpl', 'mpinc', 'mppul', 'mplgs', 'nrang', 'frang', 'rsep', 'xcf']
 
 GROUP_ATTRS = [\
         'time.yr', 'time.mo', 'time.dy', 'time.hr', 'time.mt', 'time.sc', 'time.us', \
@@ -167,16 +166,16 @@ class LombFit:
         
         beamgrp = hdf5file[str(self.bmnum)]
         beamgrp.attrs['readme'] = FITLOMB_README
-        beamgrp.attrs['fitlomb.revision.major'] = FITLOMB_REVISION_MAJOR 
-        beamgrp.attrs['fitlomb.revision.minor'] = FITLOMB_REVISION_MINOR
-        beamgrp.attrs['fitlomb.bayes.iterations'] = self.maxfreqs 
+        beamgrp.attrs['fitlomb.revision.major'] = np.int16(FITLOMB_REVISION_MAJOR)
+        beamgrp.attrs['fitlomb.revision.minor'] = np.int16(FITLOMB_REVISION_MINOR)
+        beamgrp.attrs['fitlomb.bayes.iterations'] = np.int16(self.maxfreqs)
         beamgrp.attrs['origin.code'] = ORIGIN_CODE # TODO: ADD ARGUEMENTS
         beamgrp.attrs['origin.time'] = str(datetime.datetime.now())
         beamgrp.attrs['rawacf.origin.code'] = self.rawacf['origin.code']
         beamgrp.attrs['rawacf.origin.time'] = self.rawacf['origin.time']
 
         for gattr in BEAM_ATTRS:
-            beamgrp.attrs[attr] = self.rawacf[gattr]
+            beamgrp.attrs[gattr] = self.rawacf[gattr]
         
         grp.attrs['epoch.time'] = calendar.timegm(self.recordtime.timetuple()) + int(self.rawacf['time.us'])/1e6
         # TODO: SET THE FOLLOWING
