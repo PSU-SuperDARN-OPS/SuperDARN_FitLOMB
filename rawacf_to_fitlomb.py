@@ -49,20 +49,22 @@ POWER_CMAP = plt.cm.jet
 
 BEAM_ATTRS = ['radar.revision.major', 'radar.revision.minor',\
         'origin.command', 'cp', 'stid', \
-        'rawacf.revision.major', 'rawacf.revision.minor',\
-        'intt.sc', 'intt.us', 'txpl', 'mpinc', 'mppul', 'mplgs', 'nrang', 'frang', 'rsep', 'xcf']
+        'rawacf.revision.major', 'rawacf.revision.minor']
+        
 
 GROUP_ATTRS = [\
         'time.yr', 'time.mo', 'time.dy', 'time.hr', 'time.mt', 'time.sc', 'time.us', \
         'txpow', 'nave', 'atten', 'lagfr', 'smsep', 'ercod', 'stat.agc', 'stat.lopwr', \
         'noise.search', 'noise.mean', 'channel', 'bmnum', 'bmazm', 'scan', 'offset', 'rxrise',\
-        'tfreq', 'mxpwr', 'lvmax', 'combf']
+        'tfreq', 'mxpwr', 'lvmax', 'combf',\
+        'intt.sc', 'intt.us', 'txpl', 'mpinc', 'mppul', 'mplgs', 'nrang', 'frang', 'rsep', 'xcf']
 
 GROUP_ATTR_TYPES = [\
         np.int16, np.int8, np.int8, np.int8, np.int8, np.int8, np.int32, \
         np.int16, np.int16, np.int16, np.int16, np.int16, np.int16, np.int8, np.int8,\
         np.float32, np.float32, np.int8, np.int8, np.float32, np.int16, np.int16, np.int16,\
-        np.int16, np.int32, np.int32, str]
+        np.int16, np.int32, np.int32, str,\
+        np.int16, np.int32, np.int16, np.int16, np.int16, np.int16, np.int16, np.int16, np.int16, np.int8]
 
 class LombFit:
     def __init__(self, record):
