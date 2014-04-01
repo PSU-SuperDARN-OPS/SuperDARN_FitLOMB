@@ -3,12 +3,13 @@
 
 import argparse
 import h5py
+import pdb
 import datetime
 import matplotlib.pyplot as plt
 import matplotlib.dates as dates
-import pdb
 import numpy as np
 import glob
+from pytz import timezone
 
 MAX_LOMBDEPTH = 2
 DATADIR = './data/'
@@ -63,13 +64,14 @@ def getParam(lombfit, beam, param, maskparam = False):
     return times, ranges, rtiparam 
 
 # creates a file with all data from a radar in a folder using soft links
-def createMergefile(radar, datadir):
-    hdf5files = glob.glob(datadir + '*' + radar + '*.hdf5')
+def createMergefile(radar, day, datadir):
+    hdf5files = glob.glob(datadir + '*' + str(day) + '.*' + radar + '*.hdf5')
 
     filename = radar + '.hdf5' 
     mergefile = h5py.File(datadir + filename, 'w')
     
     for h5f in hdf5files:
+        print h5f
         f = h5py.File(h5f, 'r')
         for beam in f:
             for pulse in f[beam]:
@@ -89,10 +91,12 @@ def getPulses(lombfit, group_path):
     return pulses
 
 def PlotRTI(times, ranges, z, cmap, lim):
+    times = [t + datetime.timedelta(hours = 8) for t in times] # correct for python automatically adding timezones... 
+
     for i in range(MAX_LOMBDEPTH):
         plt.subplot(MAX_LOMBDEPTH, 1, i+1)
+        x = dates.date2num(times) 
 
-        x = dates.date2num(times)
         y = ranges[0]
 
         plt.pcolor(x, y, z[:,:,i].T, cmap = cmap)
@@ -101,7 +105,7 @@ def PlotRTI(times, ranges, z, cmap, lim):
         plt.clim(lim)
         ax = plt.gca()
 
-        hfmt = dates.DateFormatter('%m/%d %H:%M')
+        hfmt = dates.DateFormatter('%m/%d %H:%M', tz = None) 
         ax.xaxis.set_major_locator(dates.MinuteLocator(interval = 60))
         ax.xaxis.set_major_formatter(hfmt)
         ax.set_ylim(bottom = 0)
@@ -148,8 +152,9 @@ def Plot_v_l(beam, cmap = plt.cm.get_cmap("SD_V")):
 
 
 if __name__ == '__main__':
-#    createMergefile('mcm', DATADIR)
-    lombfit = h5py.File(DATADIR + 'mcm.hdf5', 'r')
+    day = 18
+    createMergefile('kod', day, DATADIR)
+    lombfit = h5py.File(DATADIR + 'kod.hdf5', 'r')
 
     Plot_p_l(beam = 9)
     Plot_w_l(beam = 9)

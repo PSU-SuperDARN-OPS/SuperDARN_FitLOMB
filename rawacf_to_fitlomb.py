@@ -25,10 +25,9 @@ import pp
 from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes, calc_zoomvar
 
 FITLOMB_REVISION_MAJOR = 0
-FITLOMB_REVISION_MINOR = 0
+FITLOMB_REVISION_MINOR = 1
 ORIGIN_CODE = 'rawacf_to_fitlomb.py'
 DATA_DIR = './data/'
-DSET_COMPRESSION = 'gzip'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
 
 I_OFFSET = 0
@@ -36,11 +35,11 @@ Q_OFFSET = 1
 
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 1000 # m/s, max velocity (doppler shift) to include in lomb
-MAX_W = 2000 # m/s, max spectral width to include in lomb 
+MAX_W = 1200 # m/s, max spectral width to include in lomb 
 C = 3e8
 
-ALPHA_RES = 25 # m/s
-VEL_RES = 25 # m/s
+ALPHA_RES = 30 # m/s
+VEL_RES = 30 # m/s
 
 VEL_CMAP = plt.cm.RdBu
 FREQ_CMAP = plt.cm.spectral
@@ -48,15 +47,23 @@ NOISE_CMAP = plt.cm.autumn
 SPECW_CMAP = plt.cm.hot
 POWER_CMAP = plt.cm.jet
 
-GROUP_ATTRS = ['radar.revision.major', 'radar.revision.minor', \
+BEAM_ATTRS = ['radar.revision.major', 'radar.revision.minor',\
         'origin.command', 'cp', 'stid', \
+        'rawacf.revision.major', 'rawacf.revision.minor',\
+        'intt.sc', 'intt.us', 'txpl', 'mpinc', 'mppul', 'mplgs', 'nrang', 'frang', 'rsep', 'xcf',\
+        'rawacf.revision.major', 'rawacf.revision.minor']
+
+GROUP_ATTRS = [\
         'time.yr', 'time.mo', 'time.dy', 'time.hr', 'time.mt', 'time.sc', 'time.us', \
         'txpow', 'nave', 'atten', 'lagfr', 'smsep', 'ercod', 'stat.agc', 'stat.lopwr', \
         'noise.search', 'noise.mean', 'channel', 'bmnum', 'bmazm', 'scan', 'offset', 'rxrise',\
-        'intt.sc', 'intt.us', 'txpl', 'mpinc', 'mppul', 'mplgs', 'nrang', 'frang', 'rsep', 'xcf',\
-        'tfreq', 'mxpwr', 'lvmax', 'rawacf.revision.major', 'rawacf.revision.minor', 'combf']
+        'tfreq', 'mxpwr', 'lvmax', 'combf']
 
-RAWACF_VECTORS = ['ptab', 'ltab', 'slist', 'pwr0']
+GROUP_ATTR_TYPES = [\
+        np.int16, np.int8, np.int8, np.int8, np.int8, np.int8, np.int32, \
+        np.int16, np.int16, np.int16, np.int16, np.int16, np.int16, np.int8, np.int8,\
+        np.float32, np.float32, np.int8, np.int8, np.float32, np.int16, np.int16, np.int16,\
+        np.int16, np.int32, np.int32, str]
 
 class LombFit:
     def __init__(self, record):
@@ -99,13 +106,16 @@ class LombFit:
         self.w_thresh = 90. # blanchard, 2009
         
         # threshold on power (snr), spectral width std error m/s, and velocity std error m/s for quality flag
-        self.qwle_thresh = 80
-        self.qvle_thresh = 80
+        self.qwle_thresh = 90
+        self.qvle_thresh = 90
         self.qpwr_thresh = 2
-    
+        
+        # threshold (snr) to keep data
+        self.pwr_keepthresh = 1
+
         # thresholds on velocity and spectral width for ionospheric scatter flag (m/s)
         self.wimin_thresh = 100
-        self.wimax_thresh = 1400
+        self.wimax_thresh = 1100
         self.vimax_thresh = 1000
         self.vimin_thresh = 100
 
@@ -138,6 +148,8 @@ class LombFit:
         self.gflg       = np.zeros([self.nranges, self.maxfreqs])
         self.iflg       = np.zeros([self.nranges, self.maxfreqs])
         self.qflg       = np.zeros([self.nranges, self.maxfreqs])
+
+        self.keep       = np.zeros([self.nranges, self.maxfreqs])
        
         self.nlag       = np.zeros([self.nranges])
         
@@ -150,44 +162,54 @@ class LombFit:
         grp = hdf5file.create_group(groupname)
                
         # add scalars as attributes to group
-        for attr in GROUP_ATTRS:
-            grp.attrs[attr] = self.rawacf[attr]
+        for (i,attr) in enumerate(GROUP_ATTRS):
+            grp.attrs[attr] = GROUP_ATTR_TYPES[i](self.rawacf[attr])
         
-        grp.attrs['readme'] = FITLOMB_README
-        grp.attrs['fitlomb.revision.major'] = FITLOMB_REVISION_MAJOR 
-        grp.attrs['fitlomb.revision.minor'] = FITLOMB_REVISION_MINOR
-        grp.attrs['fitlomb.bayes.iterations'] = self.maxfreqs 
-        grp.attrs['origin.code'] = ORIGIN_CODE # TODO: ADD ARGUEMENTS
-        grp.attrs['origin.time'] = str(datetime.datetime.now())
+        beamgrp = hdf5file[str(self.bmnum)]
+        beamgrp.attrs['readme'] = FITLOMB_README
+        beamgrp.attrs['fitlomb.revision.major'] = FITLOMB_REVISION_MAJOR 
+        beamgrp.attrs['fitlomb.revision.minor'] = FITLOMB_REVISION_MINOR
+        beamgrp.attrs['fitlomb.bayes.iterations'] = self.maxfreqs 
+        beamgrp.attrs['origin.code'] = ORIGIN_CODE # TODO: ADD ARGUEMENTS
+        beamgrp.attrs['origin.time'] = str(datetime.datetime.now())
+        beamgrp.attrs['rawacf.origin.code'] = self.rawacf['origin.code']
+        beamgrp.attrs['rawacf.origin.time'] = self.rawacf['origin.time']
+
+        for gattr in BEAM_ATTRS:
+            beamgrp.attrs[attr] = self.rawacf[gattr]
+        
+
         grp.attrs['epoch.time'] = calendar.timegm(self.recordtime.timetuple()) + int(self.rawacf['time.us'])/1e6
-        grp.attrs['rawacf.origin.code'] = self.rawacf['origin.code']
-        grp.attrs['rawacf.origin.time'] = self.rawacf['origin.time']
         # TODO: SET THE FOLLOWING
-        grp.attrs['noise.sky'] = 0 # sky noise? 
-        grp.attrs['noise.lag0'] = 0 # lag zero power from noise acf?
-        grp.attrs['noise.vel'] = 0 # velocity from fitting noise acf?
-        grp.attrs['thr'] = 0 # wtf is this?
+        #grp.attrs['noise.sky'] = 0 # sky noise? 
+        grp.attrs['noise.lag0'] = np.float32(self.noise) # lag zero power from noise acf?
+        #grp.attrs['noise.vel'] = 0 # velocity from fitting noise acf?
+        #grp.attrs['thr'] = 0 # wtf is this?
         
-        # copy relevant vectors from rawacf
-        for v in RAWACF_VECTORS:
-            d = hdf5file.create_dataset(groupname + '/' + v, data = self.rawacf[v], compression = DSET_COMPRESSION)
+        # copy over vectors from rawacf
+        add_compact_dset(hdf5file, groupname, 'ptab', np.int16(self.rawacf['ptab']), h5py.h5t.STD_I16BE)
+        add_compact_dset(hdf5file, groupname, 'ltab', np.int16(self.rawacf['ltab']), h5py.h5t.STD_I16BE)
+        add_compact_dset(hdf5file, groupname, 'slist', np.int16(self.rawacf['slist']), h5py.h5t.STD_I16BE)
+        add_compact_dset(hdf5file, groupname, 'pwr0', np.float32(self.rawacf['pwr0']), h5py.h5t.NATIVE_FLOAT)
 
-        
-        hdf5file.create_dataset(groupname + '/qflg', data = self.qflg, compression = DSET_COMPRESSION)
-        hdf5file.create_dataset(groupname + '/gflg', data = self.gflg, compression = DSET_COMPRESSION)
-        hdf5file.create_dataset(groupname + '/iflg', data = self.iflg, compression = DSET_COMPRESSION)
+        # add calculated parameters
+        add_compact_dset(hdf5file, groupname, 'qflg', np.int8(self.qflg), h5py.h5t.STD_I8BE)
+        add_compact_dset(hdf5file, groupname, 'gflg', np.int8(self.gflg), h5py.h5t.STD_I8BE)
+        add_compact_dset(hdf5file, groupname, 'iflg', np.int8(self.iflg), h5py.h5t.STD_I8BE)
+        add_compact_dset(hdf5file, groupname, 'nlag', np.int16(self.p_l_e), h5py.h5t.STD_I16BE)
 
-        hdf5file.create_dataset(groupname + '/p_l', data = self.p_l, compression = DSET_COMPRESSION)
-        hdf5file.create_dataset(groupname + '/p_l_e', data = self.p_l_e, compression = DSET_COMPRESSION)
-        hdf5file.create_dataset(groupname + '/w_l', data = self.w_l, compression = DSET_COMPRESSION)
-        hdf5file.create_dataset(groupname + '/w_l_e', data = self.w_l_e, compression = DSET_COMPRESSION)
-        hdf5file.create_dataset(groupname + '/v_l', data = self.v_l, compression = DSET_COMPRESSION)
-        hdf5file.create_dataset(groupname + '/v_l_e', data = self.v_l_e, compression = DSET_COMPRESSION)
-        
-        hdf5file.create_dataset(groupname + '/nlag',data = self.nlag, compression = DSET_COMPRESSION)
+        add_compact_dset(hdf5file, groupname, 'p_l', np.float32(self.p_l), h5py.h5t.NATIVE_FLOAT)
+        add_compact_dset(hdf5file, groupname, 'p_l_e', np.float32(self.p_l_e), h5py.h5t.NATIVE_FLOAT)
+        add_compact_dset(hdf5file, groupname, 'w_l', np.float32(self.w_l), h5py.h5t.NATIVE_FLOAT)
+        add_compact_dset(hdf5file, groupname, 'w_l_e', np.float32(self.w_l_e), h5py.h5t.NATIVE_FLOAT)
+        add_compact_dset(hdf5file, groupname, 'v_l', np.float32(self.v_l), h5py.h5t.NATIVE_FLOAT)
+        add_compact_dset(hdf5file, groupname, 'v_l_e', np.float32(self.v_l_e), h5py.h5t.NATIVE_FLOAT)
+
 
         # TODO: verify that the following vectors are not relevant for fitlomb: phi0, phi0_e, sd_l, sd_s, sd_phi
         # add fitlomb specific attributtes and datasets
+    
+
     # calculates FitACF-like parameters for each peak in the spectrum
     # processes the pulse (move it __init__)?
     def ProcessPulse(self, cubecache):
@@ -303,6 +325,9 @@ class LombFit:
                         self.w_l[rgate, i] > -self.wimax_thresh and \
                         self.v_l[rgate, i] > -self.vimax_thresh:
                     self.qflg[rgate,i] = 1
+                
+                if self.p_l[rgate,i] > self.pwr_keepthresh:
+                    self.keep[rgate, i] = 1
 
                 # scale p_l by 10 * log10 to match fitacf
                 self.p_l = 10 * np.log10(self.p_l)
@@ -367,6 +392,19 @@ def PlotMixed(lomb):
         for mixed in mixed_scatter:
             lomb.PlotPeak(mixed)
 
+# create a COMPACT type h5py dataset using low level API...
+def add_compact_dset(hdf5file, group, dsetname, data, dtype):
+    dsetname = (group + '/' + dsetname).encode()
+
+    dims = data.shape
+    space_id = h5py.h5s.create_simple(dims)
+    dcpl = h5py.h5p.create(h5py.h5p.DATASET_CREATE)
+    dcpl.set_layout(h5py.h5d.COMPACT)
+
+    dset = h5py.h5d.create(hdf5file.id, dsetname, dtype, space_id, dcpl)
+    dset.write(h5py.h5s.ALL, h5py.h5s.ALL, data)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
@@ -402,7 +440,6 @@ if __name__ == '__main__':
         #    continue
         #if t > datetime.datetime(2014, 3, 24, 17, 55):
         #    break
-
         print 'processing time ' + str(t)
         fit = LombFit(dfile[t])
         
