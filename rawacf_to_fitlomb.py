@@ -297,7 +297,7 @@ class LombFit:
                 self.w_l[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.tfreq * 1e3)) 
 
                 # approximate alpha error by taking half of range of alphas covered in fwhm
-                self.w_l_e[rgate,i] = fit['alpha_fwhm'] / FWHM_TO_SIGMA
+                self.w_l_e[rgate,i] = ((C * fit['alpha_fwhm']) / (2. np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA
                 
                 # amplitude estimation, see bayesian analysis v: amplitude estimation, multiple well separated sinusoids
                 # bretthorst, equation 78, I'm probably doing this wrong...

@@ -76,10 +76,6 @@ def createMergefile(radar, day, datadir):
         for beam in f:
             for pulse in f[beam]:
                 dset = beam + '/' + pulse 
-                pdb.set_trace()
-                f[dset].attrs['nrang'] = f[beam].attrs['nrang']
-                f[dset].attrs['frang'] = f[beam].attrs['frang']
-                f[dset].attrs['rsep'] = f[beam].attrs['rsep']
                 mergefile[dset] = h5py.ExternalLink(h5f.split('/')[-1], dset)
 
 
@@ -102,8 +98,19 @@ def PlotRTI(times, ranges, z, cmap, lim):
         plt.subplot(MAX_LOMBDEPTH, 1, i+1)
         x = dates.date2num(times) 
 
-        y = ranges[0]
+        maxranges = ranges[np.argmax([len(r) for r in ranges])]
+        y = maxranges
 
+        # replicate data for plotting if number of range gates is lower than maximum 
+        # this assumes frang doesn't change
+        for (j,r) in enumerate(ranges):
+            repfactor = int(len(maxranges) / len(r))
+            ztemp = (z[j][:len(r)]).copy()
+
+            for k in range(len(maxranges)):
+                z[j][k] = ztemp[k/repfactor]
+        # so, number of range gates varies from 75 to 225
+        # need to fit into array of size 255...
         plt.pcolor(x, y, z[:,:,i].T, cmap = cmap)
         plt.axis([x.min(), x.max(), y.min(), y.max()])
 
