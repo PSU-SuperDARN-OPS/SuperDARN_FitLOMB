@@ -111,7 +111,7 @@ class LombFit:
         self.qpwr_thresh = 2
         
         # threshold (snr) to keep data
-        self.pwr_keepthresh = 1
+        self.pwr_keepthresh = 2
 
         # thresholds on velocity and spectral width for ionospheric scatter flag (m/s)
         self.wimin_thresh = 100
@@ -178,7 +178,6 @@ class LombFit:
         for gattr in BEAM_ATTRS:
             beamgrp.attrs[attr] = self.rawacf[gattr]
         
-
         grp.attrs['epoch.time'] = calendar.timegm(self.recordtime.timetuple()) + int(self.rawacf['time.us'])/1e6
         # TODO: SET THE FOLLOWING
         #grp.attrs['noise.sky'] = 0 # sky noise? 
@@ -191,12 +190,14 @@ class LombFit:
         add_compact_dset(hdf5file, groupname, 'ltab', np.int16(self.rawacf['ltab']), h5py.h5t.STD_I16BE)
         add_compact_dset(hdf5file, groupname, 'slist', np.int16(self.rawacf['slist']), h5py.h5t.STD_I16BE)
         add_compact_dset(hdf5file, groupname, 'pwr0', np.float32(self.rawacf['pwr0']), h5py.h5t.NATIVE_FLOAT)
-
+        
         # add calculated parameters
         add_compact_dset(hdf5file, groupname, 'qflg', np.int8(self.qflg), h5py.h5t.STD_I8BE)
         add_compact_dset(hdf5file, groupname, 'gflg', np.int8(self.gflg), h5py.h5t.STD_I8BE)
         add_compact_dset(hdf5file, groupname, 'iflg', np.int8(self.iflg), h5py.h5t.STD_I8BE)
-        add_compact_dset(hdf5file, groupname, 'nlag', np.int16(self.p_l_e), h5py.h5t.STD_I16BE)
+        add_compact_dset(hdf5file, groupname, 'nlag', np.int16(self.nlag), h5py.h5t.STD_I16BE)
+        
+        add_compact_dset(hdf5file, groupname, 'keep_key', np.int16(self.keep), h5py.h5t.STD_I8BE)
 
         add_compact_dset(hdf5file, groupname, 'p_l', np.float32(self.p_l), h5py.h5t.NATIVE_FLOAT)
         add_compact_dset(hdf5file, groupname, 'p_l_e', np.float32(self.p_l_e), h5py.h5t.NATIVE_FLOAT)
@@ -287,7 +288,7 @@ class LombFit:
         for rgate in self.ranges:
             for (i, fit) in enumerate(self.lfits[rgate]):
                 # calculate "lambda" parameters
-                np.append(self.sd_l[rgate],0) # TODO: what is sd_l (standard deviation of lambda?)
+                np.append(self.sd_l[rgate],0) # TODO: what is a reasonable value for this? 
                  
                 # see Effects of mixed scatter on SuperDARN convection maps near (1) for spectral width 
                 # see ros.3.6/codebase/superdarn/src.lib/tk/fitacf/src/fit_acf.c and do_fit.c
@@ -328,11 +329,11 @@ class LombFit:
                 
                 if self.p_l[rgate,i] > self.pwr_keepthresh:
                     self.keep[rgate, i] = 1
+                
+        # scale p_l by 10 * log10 to match fitacf
+        self.p_l = 10 * np.log10(self.p_l)
 
-                # scale p_l by 10 * log10 to match fitacf
-                self.p_l = 10 * np.log10(self.p_l)
-
-                # TODO: also calculate "sigma" parameters
+        # TODO: also calculate "sigma" parameters (call iterative_bayes again with model = 2)
                            
     def PlotPeak(self, rgate):
         for (i,fit) in enumerate(self.lfits[rgate]):
@@ -393,8 +394,12 @@ def PlotMixed(lomb):
             lomb.PlotPeak(mixed)
 
 # create a COMPACT type h5py dataset using low level API...
-def add_compact_dset(hdf5file, group, dsetname, data, dtype):
+def add_compact_dset(hdf5file, group, dsetname, data, dtype, mask = []):
     dsetname = (group + '/' + dsetname).encode()
+    if mask != []:
+        # save entire row if good data
+        mask = np.array([sum(l) for l in mask]) > 0
+        data = data[mask]
 
     dims = data.shape
     space_id = h5py.h5s.create_simple(dims)
@@ -443,9 +448,9 @@ if __name__ == '__main__':
         print 'processing time ' + str(t)
         fit = LombFit(dfile[t])
         
-        fit.ParallelProcessPulse()
+        #fit.ParallelProcessPulse()
         # alternately, use non-parallelized version (easier to debug/optimize)
-        #fit.ProcessPulse(cubecache)
+        fit.ProcessPulse(cubecache)
 
         fit.WriteLSSFit(hdf5file)
 
