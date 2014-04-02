@@ -25,7 +25,7 @@ import pp
 from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes, calc_zoomvar
 
 FITLOMB_REVISION_MAJOR = 0
-FITLOMB_REVISION_MINOR = 1
+FITLOMB_REVISION_MINOR = 2
 ORIGIN_CODE = 'rawacf_to_fitlomb.py'
 DATA_DIR = './data/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
@@ -37,6 +37,8 @@ FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 1000 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 1200 # m/s, max spectral width to include in lomb 
 C = 3e8
+
+CALC_SIGMA = 0
 
 ALPHA_RES = 30 # m/s
 VEL_RES = 30 # m/s
@@ -119,17 +121,11 @@ class LombFit:
         self.wimax_thresh = 1100
         self.vimax_thresh = 1000
         self.vimin_thresh = 100
-
-        # take average of smallest ten powers at range gate 0 for noise estimate
-        self.noise = np.mean(sorted(self.rawacf['pwr0'])[:10])
-        
+       
         # initialize empty arrays for fitted parameters 
         self.lfits      = [[] for r in self.ranges]
         self.sfits      = [[] for r in self.ranges]
 
-        self.v          = np.zeros([self.nranges, self.maxfreqs])
-        self.v_e        = np.zeros([self.nranges, self.maxfreqs])
- 
         self.sd_s       = np.zeros([self.nranges, self.maxfreqs])
         self.w_s_e      = np.zeros([self.nranges, self.maxfreqs])
         self.w_s        = np.zeros([self.nranges, self.maxfreqs])
@@ -155,7 +151,8 @@ class LombFit:
         self.nlag       = np.zeros([self.nranges])
         
         self.CalcBadlags()
-
+        self.CalcNoise()
+ 
     # appends a record of the lss fit to an hdf5 file
     def WriteLSSFit(self, hdf5file):
         # create a group for /[beam number]/[record time]
@@ -198,7 +195,7 @@ class LombFit:
         add_compact_dset(hdf5file, groupname, 'iflg', np.int8(self.iflg), h5py.h5t.STD_I8BE)
         add_compact_dset(hdf5file, groupname, 'nlag', np.int16(self.nlag), h5py.h5t.STD_I16BE)
         
-        add_compact_dset(hdf5file, groupname, 'keep_key', np.int16(self.keep), h5py.h5t.STD_I8BE)
+        #add_compact_dset(hdf5file, groupname, 'keep_key', np.int16(self.keep), h5py.h5t.STD_I8BE)
 
         add_compact_dset(hdf5file, groupname, 'p_l', np.float32(self.p_l), h5py.h5t.NATIVE_FLOAT)
         add_compact_dset(hdf5file, groupname, 'p_l_e', np.float32(self.p_l_e), h5py.h5t.NATIVE_FLOAT)
@@ -280,8 +277,10 @@ class LombFit:
         t, samples = self._CalcSamples(rgate)
 
         # calcuate generalized lomb-scargle periodogram iteratively
-        self.lfits[rgate] = iterative_bayes(samples, t, self.freqs, self.alfs, env_model, self.maxfreqs, cubecache = cubecache)
-        #self.sfits[rgate] = iterative_bayes(samples, t, freqs, alfs, maxfreqs = 2, env_model = 2)
+        if env_model == 1:
+            self.lfits[rgate] = iterative_bayes(samples, t, self.freqs, self.alfs, env_model, self.maxfreqs, cubecache = cubecache)
+        elif env_model == 2:
+            self.sfits[rgate] = iterative_bayes(samples, t, self.freqs, self.alfs, env_model, self.maxfreqs, cubecache = cubecache)
 
     def ProcessPeaks(self):
         # compute velocity, width, and power for each peak with "sigma" and "lambda" fits
@@ -297,7 +296,7 @@ class LombFit:
                 self.w_l[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.tfreq * 1e3)) 
 
                 # approximate alpha error by taking half of range of alphas covered in fwhm
-                self.w_l_e[rgate,i] = ((C * fit['alpha_fwhm']) / (2. np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA
+                self.w_l_e[rgate,i] = ((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA
                 
                 # amplitude estimation, see bayesian analysis v: amplitude estimation, multiple well separated sinusoids
                 # bretthorst, equation 78, I'm probably doing this wrong...
@@ -330,7 +329,23 @@ class LombFit:
                 
                 if self.p_l[rgate,i] > self.pwr_keepthresh:
                     self.keep[rgate, i] = 1
-                
+            if CALC_SIGMA:
+                for (i, fit) in enumerate(self.sfits[rgate]):
+                    # calculate "sigma" parameters
+                    np.append(self.sd_s[rgate],0) # TODO: what is a reasonable value for this? 
+                     
+                    self.w_s[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.tfreq * 1e3)) 
+                    self.w_s_e[rgate,i] = ((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA
+                    
+                    self.p_s[rgate,i] = fit['amplitude'] / self.noise
+                    self.p_s_e[rgate,i] = np.sqrt((self.noise ** 2)/fit['amplitude_error_unscaled'])/self.noise # this may be scaled wrong..
+
+                    v_s = (fit['frequency'] * C) / (2 * self.tfreq * 1e3)
+                    self.v_s[rgate,i] = v_s
+                    self.v_s_e[rgate,i] = (((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA
+
+                self.p_s = 10 * np.log10(self.p_l)
+
         # scale p_l by 10 * log10 to match fitacf
         self.p_l = 10 * np.log10(self.p_l)
 
@@ -358,6 +373,31 @@ class LombFit:
             plt.ylabel('SNR')
 
         plt.show()
+
+    def CalcNoise(self):
+        # take average of smallest ten powers at range gate 0 for lower bound on noise
+        pnmin = np.mean(sorted(self.rawacf['pwr0'])[:10])
+        self.noise = pnmin
+
+        # take 1.6 * pnmin as upper bound for noise, 
+        pnmax = 1.6 * pnmin # why 1.6? because fitacf does it that way...
+        
+        noise_samples = np.array([])
+
+        # look through good lags for ranges with pnmin, pnmax for more noise samples
+        noise_ranges = (self.rawacf['pwr0'] > pnmin) * (self.rawacf['pwr0'] < pnmax)
+        
+        for r in np.nonzero(noise_ranges)[0]:
+            t, samples = self._CalcSamples(r)
+            
+            noise_lags = np.nonzero((abs(samples) > pnmin) * (abs(samples) < pnmax))[0]
+            noise_samples = np.append(noise_samples, abs(samples)[noise_lags])
+       
+        # set noise as average of noise samples between pnmin and pnmax
+        if len(noise_samples):
+            self.noise = np.mean(noise_samples)
+    
+
 
     # calculate and store bad lags
     def CalcBadlags(self):
