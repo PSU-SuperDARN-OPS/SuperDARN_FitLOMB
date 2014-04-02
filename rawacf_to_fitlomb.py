@@ -459,7 +459,7 @@ if __name__ == '__main__':
     parser.add_argument("--outfile", help="output FitLSS file")
     parser.add_argument("--starttime", help="input RawACF file to convert")
     parser.add_argument("--endtime", help="input RawACF file to convert")
-    
+    parser.add_argument("--parallel", help="use pp to parallelize pulse fitting", action="store_true", default=0) 
     args = parser.parse_args() 
 
     # good time at McM is 3/20/2013, 8 AM UTC
@@ -486,12 +486,15 @@ if __name__ == '__main__':
         #    continue
         #if t > datetime.datetime(2014, 3, 24, 17, 55):
         #    break
-        print 'processing time ' + str(t)
+
         fit = LombFit(dfile[t])
-        
-        #fit.ParallelProcessPulse()
-        # alternately, use non-parallelized version (easier to debug/optimize)
-        fit.ProcessPulse(cubecache)
+
+        print 'processing time ' + str(t)
+        if args.parallel:
+            fit.ParallelProcessPulse()
+        else:
+            # alternately, use non-parallelized version (easier to debug/optimize)
+            fit.ProcessPulse(cubecache)
 
         fit.WriteLSSFit(hdf5file)
 
