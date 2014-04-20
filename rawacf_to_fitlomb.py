@@ -27,7 +27,7 @@ from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes, calc_zo
 FITLOMB_REVISION_MAJOR = 0
 FITLOMB_REVISION_MINOR = 2
 ORIGIN_CODE = 'rawacf_to_fitlomb.py'
-DATA_DIR = './data/'
+DATA_DIR = './testdata/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
 
 I_OFFSET = 0
@@ -43,6 +43,10 @@ CALC_SIGMA = 0
 ALPHA_RES = 30 # m/s
 VEL_RES = 30 # m/s
 
+# TODO:
+# See kod.c, /9/2014-04-18 00:33:21.028053
+# range gate 42
+# extremely high spectral width, probably faulty fit..
 VEL_CMAP = plt.cm.RdBu
 FREQ_CMAP = plt.cm.spectral
 NOISE_CMAP = plt.cm.autumn
@@ -316,7 +320,7 @@ class LombFit:
                     self.iflg[rgate,i] = 1
                 else:
                     self.gflg[rgate,i] = 1
-                
+
                 # set qflg if .. signal to noise ratios are high enough, not stuck 
                 if self.p_l[rgate,i] > self.qpwr_thresh and \
                         self.w_l_e[rgate,i] < self.qwle_thresh and \
@@ -419,7 +423,7 @@ class LombFit:
                 samples = i_lags + 1j * q_lags 
                 
                 lagpowers = abs(samples) ** 2
-                bad_lags[rgate] += (lagpowers > lagpowers[0])# add interference lags
+                bad_lags[rgate] += (lagpowers > (lagpowers[0] * 1.3))# add interference lags
             else:
                 # if lag zero is bad, we can't filter out lags greater than lag zero because we don't know what it is..
                 pass 

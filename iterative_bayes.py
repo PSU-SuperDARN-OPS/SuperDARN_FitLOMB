@@ -174,6 +174,7 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
 
     alf_fwhm, a_fwhm_bounded = find_fwhm(alf_slice, max_tuple[1])
     freq_fwhm, f_fwhm_bounded = find_fwhm(freq_slice, max_tuple[0])
+    # TODO: add comparison of input samples to std deviation of input samples 
 
     fit = {}
     fit['amplitude'] = (R_f[max_tuple] + I_f[max_tuple]) / CS_f[max_tuple] 
