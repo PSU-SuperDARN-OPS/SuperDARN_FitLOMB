@@ -14,6 +14,7 @@ from pytz import timezone
 BEAMS = 16
 MAX_LOMBDEPTH = 2
 DATADIR = './testdata/'
+PLOTDIR = './plots/'
 VEL_CMAP = plt.cm.RdBu
 FREQ_CMAP = plt.cm.spectral
 NOISE_CMAP = plt.cm.autumn
@@ -24,13 +25,13 @@ EPOCH = datetime.datetime(1970,1,1)
 
 ALLBEAMS = [str(b) for b in range(BEAMS)]
 MINRANGE = 500
-MAXRANGE = 1200
-TIMEINT = 5
+MAXRANGE = 2200
+TIMEINT = 10
 TIMESHIFT = datetime.timedelta(hours = 8) 
-
-STARTTIME = datetime.datetime(2014,04,18,0,25) 
-ENDTIME = datetime.datetime(2014,04,18,0,55) 
-
+RADAR = 'kod.c'
+STARTTIME = datetime.datetime(2014,04,20,0,30) 
+ENDTIME = datetime.datetime(2014,04,20,00,50) 
+BEAMS = [9]#ALLBEAMS# [9]
 cdict3 = {'red':  ((0.0, 0.0, 0.0),
                    (0.25, 1.0, 1.0),
                    (0.5, 1.0, 0.0),
@@ -49,14 +50,15 @@ cdict3 = {'red':  ((0.0, 0.0, 0.0),
         }
 plt.register_cmap(name='SD_V', data=cdict3)
 
+
 def prettyify():
-    plt.rcParams.update({'font.size': 18})
-    plt.rcParams.update({'font.weight': 'bold'})
+    plt.rcParams.update({'font.size': 16})
+    #plt.rcParams.update({'font.weight': 'bold'})
     plt.rcParams.update({'legend.loc': 'best'})
     plt.legend(fancybox=True)
 
 # gets a scalar value, possibly across all beams
-def getScalar(lombfit, param, beams = ALLBEAMS):
+def getScalar(lombfit, param, beams = BEAMS):
     pulses = getPulses(lombfit, beams)
     times = [datetime.datetime.fromtimestamp(p.attrs['epoch.time']) for p in pulses]
     return [p.attrs[param] for p in pulses], times
@@ -64,7 +66,7 @@ def getScalar(lombfit, param, beams = ALLBEAMS):
 # gets a parameter across the beam for the file with a mask
 # for example, param 'p_l' with maskparam 'qflg' will return a range x time x lombdepth array of power for the beam
 def getParam(lombfit, beam, param, maskparam = False, blank = WHITE):
-    pulses = getPulses(lombfit, [beam])
+    pulses = getPulses(lombfit, BEAMS)#[beam])
      
     times = [datetime.datetime.fromtimestamp(p.attrs['epoch.time']) for p in pulses]
     rgates = [p.attrs['nrang'] for p in pulses] 
@@ -85,27 +87,36 @@ def getParam(lombfit, beam, param, maskparam = False, blank = WHITE):
     return times, ranges, rtiparam 
 
 # creates a file with all data from a radar in a folder using soft links
-def createMergefile(radar, day, datadir):
-    hdf5files = glob.glob(datadir + '*' + str(day) + '.*' + radar + '*.hdf5')
-    filename = radar + '.hdf5' 
-    print filename
-    mergefile = h5py.File(datadir + filename, 'w')
+def createMergefile(radar, starttime, endtime, datadir):
+    # todo: work with starttime and endttime datetimes
     
-    for h5f in hdf5files:
-        print h5f
-        f = h5py.File(h5f, 'r')
-        for beam in f:
-            for pulse in f[beam]:
-                dset = beam + '/' + pulse 
-                mergefile[dset] = h5py.ExternalLink(h5f.split('/')[-1], dset)
+    # for each day between starttime and endtime
+    # loop, adding 1 day to starttime until delta between starttime and endtime is <= 1 day
+    day = starttime.day
+
+    filename = radar + starttime.strftime('%Y%m%d') + 'to' + endtime.strftime('%Y%m%d') + '.hdf5'
+    mergefile = h5py.File(datadir + filename, 'w')
+
+    while starttime < endtime:
+        globname = datadir + starttime.strftime('%Y%m%d.*.*.' + radar + '*.hdf5') 
+        hdf5files = glob.glob(globname)
+
+        for h5f in hdf5files:
+            print h5f
+            f = h5py.File(h5f, 'r')
+            for beam in f:
+                for pulse in f[beam]:
+                    dset = beam + '/' + pulse 
+                    mergefile[dset] = h5py.ExternalLink(h5f.split('/')[-1], dset)
 
 
-        f.close()
+            f.close()
+        starttime = starttime + datetime.timedelta(days=1)
     mergefile.close()
 
     return datadir + filename
 
-def PlotFreq(lombfit, beams):
+def PlotFreq(lombfit, beams, image = False):
     f, t = getScalar(lombfit, 'tfreq', beams = beams)
     times = [ti + TIMESHIFT for ti in t] # correct for python automatically adding timezones... 
     x = dates.date2num(times) 
@@ -120,7 +131,13 @@ def PlotFreq(lombfit, beams):
     plt.xlabel('time (UTC)')
     plt.ylabel('frequency (kHz)')
     plt.grid(True)
-    plt.show()
+    if not image:
+        plt.show()
+    else:
+        imgname = get_imagename(times[0], times[-1], RADAR, 'freq')
+        plt.savefig(imgname, bbox_inches='tight')
+        plt.clf()
+
 
 def dt2epoch(dt):
     return (dt - EPOCH).total_seconds()
@@ -177,51 +194,68 @@ def PlotRTI(times, ranges, z, cmap, lim):
         plt.subplots_adjust(bottom=.3)
 
         plt.tight_layout()
-        #locator = dates.AutoDateLocator()
-        #dateformatter = dates.AutoDateFormatter(locator)
-
-        #ax.xaxis.set_major_locator(locator)
-        #ax.xaxis.set_major_formatter(dateformatter)
-        #plt.xticks(rotation='vertical')
 
 def FormatRTI(xlabel, ylabel, title, cbarlabel):
-    for i in range(1):
-        cb = plt.colorbar()
+    cb = plt.colorbar()
 
-        #cb.ax.yaxis.set_ylabel_position('right')
-        cb.ax.set_ylabel(cbarlabel, rotation='vertical')
-        plt.ylabel(ylabel)
-        plt.xlabel(xlabel)
-        plt.title(title + ' FitLomb iteration ' + str(i + 1))
+    #cb.ax.yaxis.set_ylabel_position('right')
+    cb.ax.set_ylabel(cbarlabel, rotation='vertical')
+    plt.ylabel(ylabel)
+    plt.xlabel(xlabel)
+    plt.title(title + ', ' + RADAR)
+
+# file name
+# 2014.18.20.20.to.2014.18.20.50.p_l.kod.d.png
+def get_imagename(tstart, tstop, radar, param):
+    return PLOTDIR + tstart.strftime('%Y.%m.%d.%H%M') + '.to.' + tstop.strftime('%Y.%m.%d.%H%M') + '.' + param + '.' + radar + '.png'
 
 # parameter specific plotting functions 
-def Plot_p_l(beam, cmap = POWER_CMAP):
+def Plot_p_l(lombfit, beam, cmap = POWER_CMAP, image = False):
     times, ranges, powers = getParam(lombfit, beam, 'p_l', 'qflg', blank = 0)
     PlotRTI(times, ranges, powers, cmap, [0, 50])
     FormatRTI('time (UTC)', 'slant range (km)', 'p_l (dB)', 'p_l (dB)')
-    plt.show()
+    if not image:
+        plt.show()
+    else:
+        imgname = get_imagename(times[0], times[-1], RADAR, 'p_l')
+        plt.savefig(imgname, bbox_inches='tight')
+        plt.clf()
 
-def Plot_w_l(beam, cmap = FREQ_CMAP):
+def Plot_w_l(lombfit, beam, cmap = FREQ_CMAP, image = False):
     times, ranges, powers = getParam(lombfit, beam, 'w_l', 'qflg')
     PlotRTI(times, ranges, powers, cmap, [0, 500])
     FormatRTI('time (UTC)', 'slant range (km)', 'w_l (m/s)', 'w_l (m/s)')
-    plt.show()
+    if not image:
+        plt.show()
+    else:
+        imgname = get_imagename(times[0], times[-1], RADAR, 'w_l')
+        plt.savefig(imgname, bbox_inches='tight')
+        plt.clf()
 
-def Plot_v_l(beam, cmap = plt.cm.get_cmap("SD_V")):
+
+def Plot_v_l(lombfit, beam, cmap = plt.cm.get_cmap("SD_V"), image = False):
     times, ranges, vels = getParam(lombfit, beam, 'v_l', 'qflg')
     PlotRTI(times, ranges, vels, cmap, [-100, 100])
     FormatRTI('time (UTC)', 'slant range (km)', 'v_l (m/s)', 'v_l (m/s)')
-    plt.show()
+    if not image:
+        plt.show()
+    else:
+        imgname = get_imagename(times[0], times[-1], RADAR, 'v_l')
+        plt.savefig(imgname, bbox_inches='tight')
+        plt.clf()
 
+
+def PlotTime(radar, starttime, endtime, directory, beams):
+    mergefile = createMergefile(RADAR, STARTTIME, ENDTIME, DATADIR)
+    lombfit = h5py.File(mergefile, 'r')
+    PlotFreq(lombfit, beams=BEAMS, image = True)
+    Plot_p_l(lombfit, beam = 9, image = True)
+    Plot_w_l(lombfit, beam = 9, image = True)
+    Plot_v_l(lombfit, beam = 9, image = True)
+    lombfit.close()
 
 if __name__ == '__main__':
     prettyify() # set matplotlib parameters for larger text
-    day = 18
-    createMergefile('kod.c', day, DATADIR)
-     = #lombfieh5py.File(DATADIR + '20140402.1800.01.ade.a.fitlomb.hdf5', 'r')
-    lombfit = h5py.File(DATADIR + 'kod.c.hdf5', 'r')
-    PlotFreq(lombfit, beams=[9])
-    Plot_p_l(beam = 9)
-    Plot_w_l(beam = 9)
-    Plot_v_l(beam = 9)
-    lombfit.close()
+    PlotTime(RADAR, STARTTIME, ENDTIME, DATADIR, BEAMS)
+
+        
