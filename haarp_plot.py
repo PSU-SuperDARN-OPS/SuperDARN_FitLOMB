@@ -29,8 +29,6 @@ MAXRANGE = 2200
 TIMEINT = 10
 TIMESHIFT = datetime.timedelta(hours = 8) 
 RADAR = 'kod.c'
-STARTTIME = datetime.datetime(2014,04,20,0,30) 
-ENDTIME = datetime.datetime(2014,04,20,00,50) 
 BEAMS = [9]#ALLBEAMS# [9]
 cdict3 = {'red':  ((0.0, 0.0, 0.0),
                    (0.25, 1.0, 1.0),
@@ -58,15 +56,15 @@ def prettyify():
     plt.legend(fancybox=True)
 
 # gets a scalar value, possibly across all beams
-def getScalar(lombfit, param, beams = BEAMS):
-    pulses = getPulses(lombfit, beams)
+def getScalar(lombfit, param, beams, starttime, endtime):
+    pulses = getPulses(lombfit, beams, starttime, endtime)
     times = [datetime.datetime.fromtimestamp(p.attrs['epoch.time']) for p in pulses]
     return [p.attrs[param] for p in pulses], times
 
 # gets a parameter across the beam for the file with a mask
 # for example, param 'p_l' with maskparam 'qflg' will return a range x time x lombdepth array of power for the beam
-def getParam(lombfit, beam, param, maskparam = False, blank = WHITE):
-    pulses = getPulses(lombfit, BEAMS)#[beam])
+def getParam(lombfit, beam, param, starttime, endtime,  maskparam = False, blank = WHITE):
+    pulses = getPulses(lombfit, beam, starttime, endtime)#[beam])
      
     times = [datetime.datetime.fromtimestamp(p.attrs['epoch.time']) for p in pulses]
     rgates = [p.attrs['nrang'] for p in pulses] 
@@ -116,8 +114,8 @@ def createMergefile(radar, starttime, endtime, datadir):
 
     return datadir + filename
 
-def PlotFreq(lombfit, beams, image = False):
-    f, t = getScalar(lombfit, 'tfreq', beams = beams)
+def PlotFreq(lombfit, beams, starttime, endtime, image = False):
+    f, t = getScalar(lombfit, 'tfreq', beams, starttime, endtime)
     times = [ti + TIMESHIFT for ti in t] # correct for python automatically adding timezones... 
     x = dates.date2num(times) 
     ax = plt.gca()
@@ -144,7 +142,7 @@ def dt2epoch(dt):
 
 # returns a time sorted list of pulses 
 # beams is a list of beam numbers
-def getPulses(lombfit, beams, starttime = STARTTIME, endtime = ENDTIME):
+def getPulses(lombfit, beams, starttime, endtime):
     # grap all pulses from a path (for example, a beam number)0
     pulses = []
     for beam in beams: 
@@ -210,52 +208,123 @@ def get_imagename(tstart, tstop, radar, param):
     return PLOTDIR + tstart.strftime('%Y.%m.%d.%H%M') + '.to.' + tstop.strftime('%Y.%m.%d.%H%M') + '.' + param + '.' + radar + '.png'
 
 # parameter specific plotting functions 
-def Plot_p_l(lombfit, beam, cmap = POWER_CMAP, image = False):
-    times, ranges, powers = getParam(lombfit, beam, 'p_l', 'qflg', blank = 0)
+def Plot_p_l(lombfit, beam, starttime, endtime, cmap = POWER_CMAP, image = False):
+    times, ranges, powers = getParam(lombfit, beam, 'p_l', starttime, endtime, maskparam = 'qflg', blank = 0)
     PlotRTI(times, ranges, powers, cmap, [0, 50])
     FormatRTI('time (UTC)', 'slant range (km)', 'p_l (dB)', 'p_l (dB)')
     if not image:
         plt.show()
     else:
         imgname = get_imagename(times[0], times[-1], RADAR, 'p_l')
+        print imgname
         plt.savefig(imgname, bbox_inches='tight')
         plt.clf()
 
-def Plot_w_l(lombfit, beam, cmap = FREQ_CMAP, image = False):
-    times, ranges, powers = getParam(lombfit, beam, 'w_l', 'qflg')
+def Plot_w_l(lombfit, beam, starttime, endtime, cmap = FREQ_CMAP, image = False):
+    times, ranges, powers = getParam(lombfit, beam, 'w_l', starttime, endtime, maskparam = 'qflg')
     PlotRTI(times, ranges, powers, cmap, [0, 500])
     FormatRTI('time (UTC)', 'slant range (km)', 'w_l (m/s)', 'w_l (m/s)')
     if not image:
         plt.show()
     else:
         imgname = get_imagename(times[0], times[-1], RADAR, 'w_l')
+        print imgname
         plt.savefig(imgname, bbox_inches='tight')
         plt.clf()
 
 
-def Plot_v_l(lombfit, beam, cmap = plt.cm.get_cmap("SD_V"), image = False):
-    times, ranges, vels = getParam(lombfit, beam, 'v_l', 'qflg')
+def Plot_v_l(lombfit, beam, starttime, endtime, cmap = plt.cm.get_cmap("SD_V"), image = False):
+    times, ranges, vels = getParam(lombfit, beam, 'v_l', starttime, endtime, maskparam  ='qflg')
     PlotRTI(times, ranges, vels, cmap, [-100, 100])
     FormatRTI('time (UTC)', 'slant range (km)', 'v_l (m/s)', 'v_l (m/s)')
     if not image:
         plt.show()
     else:
         imgname = get_imagename(times[0], times[-1], RADAR, 'v_l')
+        print imgname
         plt.savefig(imgname, bbox_inches='tight')
         plt.clf()
 
 
 def PlotTime(radar, starttime, endtime, directory, beams):
-    mergefile = createMergefile(RADAR, STARTTIME, ENDTIME, DATADIR)
+    mergefile = createMergefile(RADAR, starttime, endtime, DATADIR)
     lombfit = h5py.File(mergefile, 'r')
-    PlotFreq(lombfit, beams=BEAMS, image = True)
-    Plot_p_l(lombfit, beam = 9, image = True)
-    Plot_w_l(lombfit, beam = 9, image = True)
-    Plot_v_l(lombfit, beam = 9, image = True)
+    PlotFreq(lombfit, beams, starttime, endtime, image = True)
+    Plot_p_l(lombfit, beams, starttime, endtime, image = True)
+    Plot_w_l(lombfit, beams, starttime, endtime, image = True)
+    Plot_v_l(lombfit, beams, starttime, endtime, image = True)
     lombfit.close()
 
 if __name__ == '__main__':
     prettyify() # set matplotlib parameters for larger text
-    PlotTime(RADAR, STARTTIME, ENDTIME, DATADIR, BEAMS)
+    
+    plot_times = {\
+        # BRN times
+        datetime.datetime(2014,04,17,1,20) : datetime.datetime(2014,04,17,2,20), \
+        datetime.datetime(2014,04,18,0,30) : datetime.datetime(2014,04,18,2,00), \
+        datetime.datetime(2014,04,19,0,30) : datetime.datetime(2014,04,19,1,55), \
+        datetime.datetime(2014,04,19,23,45) : datetime.datetime(2014,04,20,1,15), \
+        datetime.datetime(2014,04,21,2,00) : datetime.datetime(2014,04,21,3,20), \
+        # BRN-ePOP times
+        datetime.datetime(2014,04,17,4,40) : datetime.datetime(2014,04,17,5,00), \
+        datetime.datetime(2014,04,18,4,35) : datetime.datetime(2014,04,18,4,00), \
+        datetime.datetime(2014,04,19,4,35) : datetime.datetime(2014,04,19,4,55), \
+        datetime.datetime(2014,04,20,4,30) : datetime.datetime(2014,04,20,4,55), \
+        datetime.datetime(2014,04,21,4,30) : datetime.datetime(2014,04,20,4,50), \
+        # KND-HYS times
+        datetime.datetime(2014,04,21,6,50) : datetime.datetime(2014,04,21,7,50) \
+    }
+    
+    plot_zoomtimes = {\
+        # zoomed BRN times
+        datetime.datetime(2014,04,21,2,20) : datetime.datetime(2014,04,21,2,40), \
+        datetime.datetime(2014,04,21,2,40) : datetime.datetime(2014,04,21,3,00), \
+        datetime.datetime(2014,04,18,1,40) : datetime.datetime(2014,04,18,1,50), \
+        datetime.datetime(2014,04,18,1,50) : datetime.datetime(2014,04,18,2,00), \
+        datetime.datetime(2014,04,18,1,10) : datetime.datetime(2014,04,18,1,20), \
+        datetime.datetime(2014,04,19,1,15) : datetime.datetime(2014,04,19,1,27), \
+        datetime.datetime(2014,04,19,0,30) : datetime.datetime(2014,04,19,0,50), \
+        datetime.datetime(2014,04,19,0,00) : datetime.datetime(2014,04,19,0,30), \
+        datetime.datetime(2014,04,17,1,00) : datetime.datetime(2014,04,17,1,40)
+    }
 
-        
+    TIMEINT = 10
+
+    for stime in plot_times.keys():
+        print 'plotting '  + str(stime)
+        try:
+            RADAR = 'kod.c'
+            PlotTime(RADAR, stime, plot_times[stime], DATADIR, ['9'])
+
+            RADAR = 'kod.d'
+            PlotTime(RADAR, stime, plot_times[stime], DATADIR, ALLBEAMS)
+
+        except:
+            plt.clf()
+            pass
+        #RADAR = 'kod.d'
+        #PlotTime(RADAR, stime, plot_times[stime], DATADIR, ALLBEAMS)
+
+    TIMEINT = 1
+    MINRANGE = 600
+    MAXRANGE = 1100
+    
+
+    for stime in plot_zoomtimes.keys():
+        print 'plotting '  + str(stime)
+        try:
+
+            RADAR = 'kod.c'
+            PlotTime(RADAR, stime, plot_zoomtimes[stime], DATADIR, ['9'])
+
+            RADAR = 'kod.d'
+            PlotTime(RADAR, stime, plot_zoomtimes[stime], DATADIR, ALLBEAMS)
+
+
+        except:
+            plt.clf()
+            pass
+        #RADAR = 'kod.d'
+        #PlotTime(RADAR, stime, plot_times[stime], DATADIR, ALLBEAMS)
+
+

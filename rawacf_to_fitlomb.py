@@ -141,6 +141,9 @@ class LombFit:
         self.sd_l       = np.zeros([self.nranges, self.maxfreqs])
         self.w_l_e      = np.zeros([self.nranges, self.maxfreqs])
         self.w_l        = np.zeros([self.nranges, self.maxfreqs])
+
+        self.fit_snr    = np.zeros([self.nranges, self.maxfreqs])
+
         self.p_l        = np.zeros([self.nranges, self.maxfreqs])
         self.p_l_e      = np.zeros([self.nranges, self.maxfreqs])
         self.v_l        = np.zeros([self.nranges, self.maxfreqs])
@@ -302,6 +305,9 @@ class LombFit:
                 # approximate alpha error by taking half of range of alphas covered in fwhm
                 self.w_l_e[rgate,i] = ((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA
                 
+                # record ratio of power in signal versus power in fitted signal
+                self.fit_snr[rgate,i] = fit['fit_snr']
+
                 # amplitude estimation, see bayesian analysis v: amplitude estimation, multiple well separated sinusoids
                 # bretthorst, equation 78, I'm probably doing this wrong...
                 # to match fitacf, scale p_l by 10 * log10
