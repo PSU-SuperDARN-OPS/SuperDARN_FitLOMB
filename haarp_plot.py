@@ -251,9 +251,9 @@ def Plot_v(lombfit, beam, starttime, endtime, cmap = plt.cm.get_cmap("SD_V"), im
         plt.savefig(imgname, bbox_inches='tight')
         plt.clf()
 
-def remask(lombfit, starttime, endtime, beams, pmin, qwmin, qvmin, wmax, wmin, vmax, vmin):
+def remask(lombfit, starttime, endtime, beams, pmin, qwmin, qvmin, wmax, wmin, vmax, vmin, median = True):
     pulses = getPulses(lombfit, beams, starttime, endtime)
-    for pul in pulses:
+    for (i,pul) in enumerate(pulses):
         qmask = (pul['p_l'][...] > pmin) * \
                 (pul['v'][...] < vmax) * \
                 (pul['v'][...] > vmin) * \
@@ -261,7 +261,28 @@ def remask(lombfit, starttime, endtime, beams, pmin, qwmin, qvmin, wmax, wmin, v
                 (pul['w_l'][...] > wmin) * \
                 (pul['w_l_e'][...] < qwmin) * \
                 (pul['v_e'][...] < qvmin)
+        
         pul['qflg'][:,:] = qmask
+
+    if median: 
+        # apply spatial/temporal filter
+        for (i,pul) in enumerate(pulses):
+            # spatial filter
+            qmask = pul['qflg'][:,:]
+            sqmask = (qmask * np.append(qmask[1:],[[0,0]], axis=0)) + \
+                     (qmask * np.append([[0,0]],qmask[1:], axis=0))
+
+            # temporal filter
+            tmask = np.zeros(qmask.shape)
+            if i > 0:
+                tmask += qmask * pulses[i-1]['qflg'][:,:]
+            if i < len(pulses) -1:
+                tmask += qmask * pulses[i+1]['qflg'][:,:]
+
+            qmask = (sqmask * tmask) > 0
+            pul['qflg'][:,:] = qmask
+
+
 def PlotTime(radar, starttime, endtime, directory, beams):
     mergefile = createMergefile(RADAR, starttime, endtime, DATADIR)
     lombfit = h5py.File(mergefile, 'r+')
