@@ -5,8 +5,6 @@
 # references:
 # "Bayesian Analysis. III. Applications to NMR Signal Detection, Model Selection and Parameter Estimation" by  G. Larry Bretthorst, 1990
 
-# TODO: add better measures of fit certainty
-# TODO: SCALE P_L UNCERTAINTY WITH MEAN OF SAMPLES
 import numpy as np
 import numexpr as ne
 import pdb
@@ -108,7 +106,7 @@ def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = Fa
             if fit['alpha_fwhm_bounded']:
                 fit['alpha_fwhm'] = coarsefwhm_a
 
-        fit['fit_snr'] = mean(fit['signal'] ** 2) / mean(samples ** 2)
+        fit['fit_snr'] = np.mean(fit['signal'] ** 2) / np.mean(samples ** 2)
         fits.append(fit)
         samples -= fit['signal']
     return fits

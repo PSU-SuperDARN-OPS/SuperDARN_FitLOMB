@@ -22,11 +22,11 @@ SPECW_CMAP = plt.cm.hot
 POWER_CMAP = plt.cm.jet
 WHITE = 3e3
 EPOCH = datetime.datetime(1970,1,1)
-
+ENDOFTIME = datetime.datetime(2032,1,1)
 ALLBEAMS = [str(b) for b in range(BEAMS)]
-MINRANGE = 500
-MAXRANGE = 2200
-TIMEINT = 10
+MINRANGE = 0 
+MAXRANGE = 3000
+TIMEINT = 120
 TIMESHIFT = datetime.timedelta(hours = 8) 
 RADAR = 'kod.c'
 BEAMS = [9]#ALLBEAMS# [9]
@@ -48,6 +48,13 @@ cdict3 = {'red':  ((0.0, 0.0, 0.0),
         }
 plt.register_cmap(name='SD_V', data=cdict3)
 
+QWMIN = 40 # m/s
+QVMIN = 35 # m/s
+PMIN = 3 # dB
+WMAX = 1100 # m/s
+WMIN = -WMAX 
+VMAX = 1500 # m/s
+VMIN = -VMAX
 
 def prettyify():
     plt.rcParams.update({'font.size': 16})
@@ -59,6 +66,7 @@ def prettyify():
 def getScalar(lombfit, param, beams, starttime, endtime):
     pulses = getPulses(lombfit, beams, starttime, endtime)
     times = [datetime.datetime.fromtimestamp(p.attrs['epoch.time']) for p in pulses]
+
     return [p.attrs[param] for p in pulses], times
 
 # gets a parameter across the beam for the file with a mask
@@ -94,7 +102,6 @@ def createMergefile(radar, starttime, endtime, datadir):
 
     filename = radar + starttime.strftime('%Y%m%d') + 'to' + endtime.strftime('%Y%m%d') + '.hdf5'
     mergefile = h5py.File(datadir + filename, 'w')
-
     while starttime < endtime:
         globname = datadir + starttime.strftime('%Y%m%d.*.*.' + radar + '*.hdf5') 
         hdf5files = glob.glob(globname)
@@ -102,11 +109,9 @@ def createMergefile(radar, starttime, endtime, datadir):
         for h5f in hdf5files:
             print h5f
             f = h5py.File(h5f, 'r')
-            for beam in f:
-                for pulse in f[beam]:
-                    dset = beam + '/' + pulse 
-                    mergefile[dset] = h5py.ExternalLink(h5f.split('/')[-1], dset)
-
+            for pulse in f['/']:
+                dset = pulse 
+                mergefile[dset] = h5py.ExternalLink(h5f.split('/')[-1], dset)
 
             f.close()
         starttime = starttime + datetime.timedelta(days=1)
@@ -145,12 +150,13 @@ def dt2epoch(dt):
 def getPulses(lombfit, beams, starttime, endtime):
     # grap all pulses from a path (for example, a beam number)0
     pulses = []
-    for beam in beams: 
-        group_path = str(beam) + '/'
-        for t in lombfit[group_path]:
-            pulse = lombfit[group_path + t]
-            if pulse.attrs['epoch.time'] >= dt2epoch(starttime) and pulse.attrs['epoch.time'] <= dt2epoch(endtime):
-                pulses.append(pulse)
+    group_path =  '/'
+    for t in lombfit[group_path]:
+        pulse = lombfit[group_path + t]
+        if pulse.attrs['epoch.time'] >= dt2epoch(starttime) \
+                and pulse.attrs['epoch.time'] <= dt2epoch(endtime)\
+                and pulse.attrs['bmnum'] in [int(b) for b in beams]:
+            pulses.append(pulse)
 
     # sort list of pulses by epoch time (hdf5 doesn't sort datasets within a group)
     pulses = sorted(pulses, key = lambda pulse: pulse.attrs['epoch.time'])
@@ -233,31 +239,47 @@ def Plot_w_l(lombfit, beam, starttime, endtime, cmap = FREQ_CMAP, image = False)
         plt.clf()
 
 
-def Plot_v_l(lombfit, beam, starttime, endtime, cmap = plt.cm.get_cmap("SD_V"), image = False):
-    times, ranges, vels = getParam(lombfit, beam, 'v_l', starttime, endtime, maskparam  ='qflg')
-    PlotRTI(times, ranges, vels, cmap, [-100, 100])
-    FormatRTI('time (UTC)', 'slant range (km)', 'v_l (m/s)', 'v_l (m/s)')
+def Plot_v(lombfit, beam, starttime, endtime, cmap = plt.cm.get_cmap("SD_V"), image = False):
+    times, ranges, vels = getParam(lombfit, beam, 'v', starttime, endtime, maskparam  ='qflg')
+    PlotRTI(times, ranges, vels, cmap, [-1000, 1000])
+    FormatRTI('time (UTC)', 'slant range (km)', 'v (m/s)', 'v (m/s)')
     if not image:
         plt.show()
     else:
-        imgname = get_imagename(times[0], times[-1], RADAR, 'v_l')
+        imgname = get_imagename(times[0], times[-1], RADAR, 'v')
         print imgname
         plt.savefig(imgname, bbox_inches='tight')
         plt.clf()
 
-
+def remask(lombfit, starttime, endtime, beams, pmin, qwmin, qvmin, wmax, wmin, vmax, vmin):
+    pulses = getPulses(lombfit, beams, starttime, endtime)
+    for pul in pulses:
+        qmask = (pul['p_l'][...] > pmin) * \
+                (pul['v'][...] < vmax) * \
+                (pul['v'][...] > vmin) * \
+                (pul['w_l'][...] < wmax) * \
+                (pul['w_l'][...] > wmin) * \
+                (pul['w_l_e'][...] < qwmin) * \
+                (pul['v_e'][...] < qvmin)
+        pul['qflg'][:,:] = qmask
 def PlotTime(radar, starttime, endtime, directory, beams):
     mergefile = createMergefile(RADAR, starttime, endtime, DATADIR)
-    lombfit = h5py.File(mergefile, 'r')
+    lombfit = h5py.File(mergefile, 'r+')
+    
+    remask(lombfit, starttime, endtime, beams, PMIN, QWMIN, QVMIN, WMAX, WMIN, VMAX, VMIN)
+
     PlotFreq(lombfit, beams, starttime, endtime, image = True)
     Plot_p_l(lombfit, beams, starttime, endtime, image = True)
     Plot_w_l(lombfit, beams, starttime, endtime, image = True)
-    Plot_v_l(lombfit, beams, starttime, endtime, image = True)
+    Plot_v(lombfit, beams, starttime, endtime, image = True)
     lombfit.close()
 
 if __name__ == '__main__':
     prettyify() # set matplotlib parameters for larger text
-    
+
+    plot_times = {datetime.datetime(2013,03,20,0,00) : datetime.datetime(2014,04,20,23,59)}
+
+    '''    
     plot_times = {\
         # BRN times
         datetime.datetime(2014,04,17,1,20) : datetime.datetime(2014,04,17,2,20), \
@@ -287,27 +309,28 @@ if __name__ == '__main__':
         datetime.datetime(2014,04,19,0,00) : datetime.datetime(2014,04,19,0,30), \
         datetime.datetime(2014,04,17,1,00) : datetime.datetime(2014,04,17,1,40)
     }
-
-    TIMEINT = 10
+    '''
+    plot_zoomtimes = {}
+    TIMEINT = 120
 
     for stime in plot_times.keys():
         print 'plotting '  + str(stime)
-        try:
-            RADAR = 'kod.c'
-            PlotTime(RADAR, stime, plot_times[stime], DATADIR, ['9'])
+        #try:
+            #RADAR = 'kod.c'
+            #PlotTime(RADAR, stime, plot_times[stime], DATADIR, ['9'])
 
-            RADAR = 'kod.d'
-            PlotTime(RADAR, stime, plot_times[stime], DATADIR, ALLBEAMS)
+        RADAR = 'mcm.a'
+        PlotTime(RADAR, stime, plot_times[stime], DATADIR, ['8'])
 
-        except:
-            plt.clf()
-            pass
+        #except:
+        #    plt.clf()
+        #    pass
         #RADAR = 'kod.d'
         #PlotTime(RADAR, stime, plot_times[stime], DATADIR, ALLBEAMS)
 
     TIMEINT = 1
-    MINRANGE = 600
-    MAXRANGE = 1100
+    MINRANGE = 0 
+    MAXRANGE = 3000
     
 
     for stime in plot_zoomtimes.keys():

@@ -25,7 +25,7 @@ import pp
 from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes, calc_zoomvar
 
 FITLOMB_REVISION_MAJOR = 0
-FITLOMB_REVISION_MINOR = 2
+FITLOMB_REVISION_MINOR = 3
 ORIGIN_CODE = 'rawacf_to_fitlomb.py'
 DATA_DIR = './testdata/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
@@ -113,8 +113,8 @@ class LombFit:
         self.w_thresh = 90. # blanchard, 2009
         
         # threshold on power (snr), spectral width std error m/s, and velocity std error m/s for quality flag
-        self.qwle_thresh = 90
-        self.qvle_thresh = 90
+        self.qwle_thresh = 35
+        self.qvle_thresh = 35
         self.qpwr_thresh = 2
         
         # threshold (snr) to keep data
@@ -163,25 +163,25 @@ class LombFit:
     # appends a record of the lss fit to an hdf5 file
     def WriteLSSFit(self, hdf5file):
         # create a group for /[beam number]/[record time]
-        groupname = str(self.bmnum) + '/' + str(self.recordtime)
+        groupname = str(self.recordtime) #str(self.bmnum) + '/' + str(self.recordtime) # changed by request of bill bristow
         grp = hdf5file.create_group(groupname)
                
         # add scalars as attributes to group
         for (i,attr) in enumerate(GROUP_ATTRS):
             grp.attrs[attr] = GROUP_ATTR_TYPES[i](self.rawacf[attr])
         
-        beamgrp = hdf5file[str(self.bmnum)]
-        beamgrp.attrs['readme'] = FITLOMB_README
-        beamgrp.attrs['fitlomb.revision.major'] = np.int16(FITLOMB_REVISION_MAJOR)
-        beamgrp.attrs['fitlomb.revision.minor'] = np.int16(FITLOMB_REVISION_MINOR)
-        beamgrp.attrs['fitlomb.bayes.iterations'] = np.int16(self.maxfreqs)
-        beamgrp.attrs['origin.code'] = ORIGIN_CODE # TODO: ADD ARGUEMENTS
-        beamgrp.attrs['origin.time'] = str(datetime.datetime.now())
-        beamgrp.attrs['rawacf.origin.code'] = self.rawacf['origin.code']
-        beamgrp.attrs['rawacf.origin.time'] = self.rawacf['origin.time']
+        #beamgrp = hdf5file[str(self.bmnum)]
+        grp.attrs['readme'] = FITLOMB_README
+        grp.attrs['fitlomb.revision.major'] = np.int16(FITLOMB_REVISION_MAJOR)
+        grp.attrs['fitlomb.revision.minor'] = np.int16(FITLOMB_REVISION_MINOR)
+        grp.attrs['fitlomb.bayes.iterations'] = np.int16(self.maxfreqs)
+        grp.attrs['origin.code'] = ORIGIN_CODE # TODO: ADD ARGUEMENTS
+        grp.attrs['origin.time'] = str(datetime.datetime.now())
+        grp.attrs['rawacf.origin.code'] = self.rawacf['origin.code']
+        grp.attrs['rawacf.origin.time'] = self.rawacf['origin.time']
 
         for gattr in BEAM_ATTRS:
-            beamgrp.attrs[gattr] = self.rawacf[gattr]
+            grp.attrs[gattr] = self.rawacf[gattr]
         
         grp.attrs['epoch.time'] = calendar.timegm(self.recordtime.timetuple()) + int(self.rawacf['time.us'])/1e6
         # TODO: SET THE FOLLOWING
@@ -208,8 +208,8 @@ class LombFit:
         add_compact_dset(hdf5file, groupname, 'p_l_e', np.float32(self.p_l_e), h5py.h5t.NATIVE_FLOAT)
         add_compact_dset(hdf5file, groupname, 'w_l', np.float32(self.w_l), h5py.h5t.NATIVE_FLOAT)
         add_compact_dset(hdf5file, groupname, 'w_l_e', np.float32(self.w_l_e), h5py.h5t.NATIVE_FLOAT)
-        add_compact_dset(hdf5file, groupname, 'v_l', np.float32(self.v_l), h5py.h5t.NATIVE_FLOAT)
-        add_compact_dset(hdf5file, groupname, 'v_l_e', np.float32(self.v_l_e), h5py.h5t.NATIVE_FLOAT)
+        add_compact_dset(hdf5file, groupname, 'v', np.float32(self.v_l), h5py.h5t.NATIVE_FLOAT)
+        add_compact_dset(hdf5file, groupname, 'v_e', np.float32(self.v_l_e), h5py.h5t.NATIVE_FLOAT)
 
 
         # TODO: verify that the following vectors are not relevant for fitlomb: phi0, phi0_e, sd_l, sd_s, sd_phi
@@ -339,6 +339,7 @@ class LombFit:
                 
                 if self.p_l[rgate,i] > self.pwr_keepthresh:
                     self.keep[rgate, i] = 1
+
             if CALC_SIGMA:
                 for (i, fit) in enumerate(self.sfits[rgate]):
                     # calculate "sigma" parameters
@@ -354,7 +355,7 @@ class LombFit:
                     self.v_s[rgate,i] = v_s
                     self.v_s_e[rgate,i] = (((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA
 
-                self.p_s = 10 * np.log10(self.p_l)
+                self.p_s = 10 * np.log10(self.p_s)
 
         # scale p_l by 10 * log10 to match fitacf
         self.p_l = 10 * np.log10(self.p_l)
