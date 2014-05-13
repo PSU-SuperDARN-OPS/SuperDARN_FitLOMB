@@ -13,7 +13,7 @@ from pytz import timezone
 
 BEAMS = 16
 MAX_LOMBDEPTH = 2
-DATADIR = './testdata/'
+DATADIR = './jefdata/'
 PLOTDIR = './plots/'
 VEL_CMAP = plt.cm.RdBu
 FREQ_CMAP = plt.cm.spectral
@@ -251,7 +251,8 @@ def Plot_v(lombfit, beam, starttime, endtime, cmap = plt.cm.get_cmap("SD_V"), im
         plt.savefig(imgname, bbox_inches='tight')
         plt.clf()
 
-def remask(lombfit, starttime, endtime, beams, pmin, qwmin, qvmin, wmax, wmin, vmax, vmin, median = True):
+# recalculate qflg to experiment with different data quality thresholds
+def remask(lombfit, starttime, endtime, beams, pmin, qwmin, qvmin, wmax, wmin, vmax, vmin, median = False):
     pulses = getPulses(lombfit, beams, starttime, endtime)
     for (i,pul) in enumerate(pulses):
         qmask = (pul['p_l'][...] > pmin) * \
@@ -298,8 +299,10 @@ def PlotTime(radar, starttime, endtime, directory, beams):
 if __name__ == '__main__':
     prettyify() # set matplotlib parameters for larger text
 
-    plot_times = {datetime.datetime(2013,03,20,0,00) : datetime.datetime(2014,04,20,23,59)}
+    plot_times = {datetime.datetime(2013,9,6,0,00) : datetime.datetime(2014,9,7,23,59)}
 
+    
+    # set of times to plot, start:stop
     '''    
     plot_times = {\
         # BRN times
@@ -332,7 +335,7 @@ if __name__ == '__main__':
     }
     '''
     plot_zoomtimes = {}
-    TIMEINT = 120
+    TIMEINT = 120 #
 
     for stime in plot_times.keys():
         print 'plotting '  + str(stime)

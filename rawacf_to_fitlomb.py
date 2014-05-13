@@ -38,7 +38,7 @@ MAX_V = 1000 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 1200 # m/s, max spectral width to include in lomb 
 C = 3e8
 
-CALC_SIGMA = 0
+CALC_SIGMA = True
 
 ALPHA_RES = 30 # m/s
 VEL_RES = 30 # m/s
@@ -210,6 +210,15 @@ class LombFit:
         add_compact_dset(hdf5file, groupname, 'w_l_e', np.float32(self.w_l_e), h5py.h5t.NATIVE_FLOAT)
         add_compact_dset(hdf5file, groupname, 'v', np.float32(self.v_l), h5py.h5t.NATIVE_FLOAT)
         add_compact_dset(hdf5file, groupname, 'v_e', np.float32(self.v_l_e), h5py.h5t.NATIVE_FLOAT)
+        
+        if CALC_SIGMA:
+            add_compact_dset(hdf5file, groupname, 'p_s', np.float32(self.p_s), h5py.h5t.NATIVE_FLOAT)
+            add_compact_dset(hdf5file, groupname, 'p_s_e', np.float32(self.p_s_e), h5py.h5t.NATIVE_FLOAT)
+            add_compact_dset(hdf5file, groupname, 'w_s', np.float32(self.w_s), h5py.h5t.NATIVE_FLOAT)
+            add_compact_dset(hdf5file, groupname, 'w_s_e', np.float32(self.w_s_e), h5py.h5t.NATIVE_FLOAT)
+            add_compact_dset(hdf5file, groupname, 'v_s', np.float32(self.v_s), h5py.h5t.NATIVE_FLOAT)
+            add_compact_dset(hdf5file, groupname, 'v_s_e', np.float32(self.v_s_e), h5py.h5t.NATIVE_FLOAT)
+            
 
 
         # TODO: verify that the following vectors are not relevant for fitlomb: phi0, phi0_e, sd_l, sd_s, sd_phi
@@ -221,6 +230,8 @@ class LombFit:
     def ProcessPulse(self, cubecache):
         for r in self.ranges:
             peaks = self.CalculatePeaks(r, cubecache)
+            if CALC_SIGMA:
+                peaks = self.CalculatePeaks(r, cubecache, env_model = 2)
         self.ProcessPeaks()
     
     # TODO: move FitACF compare function from plot_pickle to here
