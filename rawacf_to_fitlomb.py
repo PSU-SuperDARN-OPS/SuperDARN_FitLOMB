@@ -32,6 +32,7 @@ FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence wit
 
 I_OFFSET = 0
 Q_OFFSET = 1
+PULSES = 1
 
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 1000 # m/s, max velocity (doppler shift) to include in lomb
@@ -371,8 +372,6 @@ class LombFit:
         # scale p_l by 10 * log10 to match fitacf
         self.p_l = 10 * np.log10(self.p_l)
 
-        # TODO: also calculate "sigma" parameters (call iterative_bayes again with model = 2)
-                           
     def PlotPeak(self, rgate):
         for (i,fit) in enumerate(self.lfits[rgate]):
             plt.subplot(len(self.lfits[rgate]),1,i+1)
@@ -419,8 +418,6 @@ class LombFit:
         if len(noise_samples):
             self.noise = np.mean(noise_samples)
     
-
-
     # calculate and store bad lags
     def CalcBadlags(self):
         bad_lags = [[] for i in range(self.nranges)]
@@ -496,19 +493,12 @@ if __name__ == '__main__':
         outfilename = args.outfile
 
     times = dfile.times
-    cubecache = TimeCube()
+    cubecache = TimeCube(pulses = PULSES)
     print DATA_DIR + outfilename
     hdf5file = h5py.File(DATA_DIR + outfilename, 'w')
 
     lombfits = []
     for (i,t) in enumerate(times):
-        #if(dfile[t]['bmnum'] != 9):
-        #    continue
-        #if t < datetime.datetime(2014, 3, 24, 17, 30):
-        #    continue
-        #if t > datetime.datetime(2014, 3, 24, 17, 55):
-        #    break
-
         fit = LombFit(dfile[t])
 
         print 'processing time ' + str(t)

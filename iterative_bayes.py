@@ -80,7 +80,7 @@ def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = Fa
     fits = []
     cubecache = False
     if not cubecache:
-        timecube = (make_spacecube(t, freqs, alfs, env_model))
+        timecube = (make_spacecube(t, freqs, alfs, env_model, pulses = 1))
     else:
         timecube = False
     
@@ -122,7 +122,7 @@ def calc_zoomvar(ar, center, zoomspan, zoom):
 # to profile:
 # kernprof.py -l foo.py
 # python -m line_profiler foo.py.lprof
-def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = False):
+def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = False, pulses = 1):
     N = len(t) * 2.# see equation (10) in [4]
     m = 2
 
@@ -134,7 +134,7 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     elif timecube:
         ce_matrix, se_matrix, CS_f = timecube 
     else:
-        ce_matrix, se_matrix, CS_f = make_spacecube(t, f, alfs, env_model)
+        ce_matrix, se_matrix, CS_f = make_spacecube(t, f, alfs, env_model, pulses = pulses)
 
     # create R_f and I_f (12) and (13) in [4]
     # these reduce to the real and complex parts of the fourier transform for uniformly sampled data

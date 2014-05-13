@@ -5,32 +5,20 @@
 # mostly time cubes.. cubes of amplitude(time,frequency,decay)
 # recomputing these takes up ~80% of runtime if not cached
 
-# attempt at lazy property evaluation
 import numpy as np
-#import pdb
-#import pycuda.gpuarray as gpuarray
-#import pycuda.driver as cuda
-#import pycuda.autoinit
-#from pycuda.elementwise import ElementwiseKernel
 import datetime
+import pdb
 
 # TimeCube is a class of cached cubes of amplitude(time, frequency, decay)
 # creating these is expensive and RAM is cheap, so...
 
-MAX_CUBES = 6 # these are ~100mb each..
 class TimeCube:
-    def __init__(self, usecuda = False, maxsize = 20):
+    def __init__(self, maxsize = 20, pulses = 1):
         self.cubecache = {}
         self.cubetimes = {}
         self.maxsize = maxsize
-        self.usecuda = usecuda
-        
-        #if self.usecuda:
-        #    self.complex_mul = ElementwiseKernel(
-        #        "double *x, double *y, double *z",
-        #        "z[i] = x[i] * y[i]",
-        #        "element_mul",)
-
+        self.pulses = pulses
+       
     def _cubeparam_key(self, t, f, alfs, env_model):
         # there must be better ways of doing this...
         return str(t) + self._listhash(f) + self._listhash(alfs) + str(env_model)
@@ -42,7 +30,7 @@ class TimeCube:
         key = self._cubeparam_key(t,f,alfs,env_model) 
 
         if not key in self.cubecache:
-            self.cubecache[key] = make_spacecube(t, f, alfs, env_model)
+            self.cubecache[key] = make_spacecube(t, f, alfs, env_model, self.pulses)
             
             # check to see if cube cache is too big. it is, delete the least recently used cube
             self.cubetimes[datetime.datetime.now()] = key 
@@ -54,10 +42,10 @@ class TimeCube:
 
         return self.cubecache[key] 
 
-def make_spacecube(t, f, alfs, env_model):
+def make_spacecube(t, f, alfs, env_model, pulses = 1):
     # create ce_matrix and se_matrix..
-    # sin and cos(w * t) * exp(-alf * t) cubes
-
+    # sin and cos(w * t) * exp(-alf * t) cubes 
+    t = np.concatenate([t] * pulses)
     omegas = 2 * np.pi * f
     c_matrix = np.cos(np.outer(omegas, t))
     s_matrix = np.sin(np.outer(omegas, t))
@@ -65,9 +53,6 @@ def make_spacecube(t, f, alfs, env_model):
     # create cube of time by frequency with no decay
     c_cube = np.tile(c_matrix, (len(alfs),1,1))
     s_cube = np.tile(s_matrix, (len(alfs),1,1))
-
-    #ce_matrix = np.zeros([len(omegas), len(t), len(alfs)])
-    #se_matrix = np.zeros([len(omegas), len(t), len(alfs)])
 
     # about 80% of execution time spent here..
     # ~ 400000
@@ -84,36 +69,7 @@ def make_spacecube(t, f, alfs, env_model):
     c_cube = np.swapaxes(c_cube, 1, 2)
     s_cube = np.swapaxes(s_cube, 0, 1)
     s_cube = np.swapaxes(s_cube, 1, 2)
-
-    #for (k, alf) in enumerate(alfs):
-    #    for (j, ti) in enumerate(t):
-    #        ce_matrix[:,j,k] = c_matrix[:,j] * envelope[k, j] 
-    #        se_matrix[:,j,k] = s_matrix[:,j] * envelope[k, j] 
-
-    # smash 'em together. (this is *much* faster than the above (clearer?) commented out approach)
     
-    # cuda path works, but it is ~twice as slow due to the time it takes to copy arrays to the gpu
-    # this could be improved by not using kernels, and writing longer cuda functions
-    # comparing i7-4700 with a nvidia 750M
-    
-    #if(self.usecuda):
-    #    cubeshape = c_cube.shape
-    #    c_gpu = gpuarray.to_gpu(c_cube.flatten())
-    #    s_gpu = gpuarray.to_gpu(s_cube.flatten())
-    #    
-    #    ce_gpu = gpuarray.zeros(cubeshape[0] * cubeshape[1] * cubeshape[2], dtype='float64')
-    #    se_gpu = gpuarray.zeros(cubeshape[0] * cubeshape[1] * cubeshape[2], dtype='float64')
-
-    #    env_gpu = gpuarray.to_gpu(envelope_cube.flatten())
-
-    #    self.element_mul(c_gpu, env_gpu, ce_gpu)
-    #    self.element_mul(s_gpu, env_gpu, se_gpu)
-        
-    #    ce_matrix = ce_gpu.get().reshape(cubeshape)
-    #    se_matrix = se_gpu.get().reshape(cubeshape)
-
-    #else: 
-
     ce_matrix = c_cube * envelope_cube
     se_matrix = s_cube * envelope_cube
 
