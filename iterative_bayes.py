@@ -76,11 +76,11 @@ def find_fwhm(ia, pt_apex,log = True,factor=.5,da=1):
 # returns fit, with model parameters, a frequency, and a significance
 # for simultaneous complex samples, normalized frequency, ts normalized to 1s
 #@profile
-def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = False, zoom = 10., zoomspan = 5):
+def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = False, pulses = 1, zoom = 10., zoomspan = 5):
     fits = []
     cubecache = False
     if not cubecache:
-        timecube = (make_spacecube(t, freqs, alfs, env_model, pulses = 1))
+        timecube = (make_spacecube(t, freqs, alfs, env_model, pulses = pulses))
     else:
         timecube = False
     
@@ -98,7 +98,7 @@ def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = Fa
             zfreqs = calc_zoomvar(freqs, fit['frequency'], zoomspan, zoom)
             zalfs = calc_zoomvar(freqs, fit['alpha'], zoomspan, zoom)
             zoomcube = (make_spacecube(t, zfreqs, zalfs, env_model))
-            fit = calculate_bayes(samples, t, zfreqs, zalfs, env_model, cubecache = False, timecube = zoomcube)
+            fit = calculate_bayes(samples, t, zfreqs, zalfs, env_model, cubecache = False, timecube = zoomcube, pulses = pulses)
 
             # use old fwhm if fwhm was bounded by zoom level, revert to old fwhm (it wasn't a good fit anyways..)
             if fit['frequency_fwhm_bounded']:

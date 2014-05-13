@@ -25,14 +25,13 @@ import pp
 from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes, calc_zoomvar
 
 FITLOMB_REVISION_MAJOR = 0
-FITLOMB_REVISION_MINOR = 3
+FITLOMB_REVISION_MINOR = 4
 ORIGIN_CODE = 'rawacf_to_fitlomb.py'
 DATA_DIR = './testdata/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
 
 I_OFFSET = 0
 Q_OFFSET = 1
-PULSES = 1
 
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 1000 # m/s, max velocity (doppler shift) to include in lomb
@@ -235,17 +234,23 @@ class LombFit:
                 peaks = self.CalculatePeaks(r, cubecache, env_model = 2)
         self.ProcessPeaks()
     
+    def ProcessMultiPulse(self, cubecache, otherpulses):
+        for r in self.ranges:
+            peaks = self.CalculatePeaks(r, cubecache, otherpulses = otherpulses)
+            if CALC_SIGMA:
+                peaks = self.CalculatePeaks(r, cubecache, env_model = 2, otherpulses = otherpulses)
+        self.ProcessPeaks()
+
+
     # TODO: move FitACF compare function from plot_pickle to here
     def FitACFCompare(self, fitacffile):
         pass
 
-    # TODO: work with non-lambda env models
-    def ParallelProcessPulse(self, cubecache = False):
+    def ParallelProcessPulse(self, cubecache = False, pulses = 1):
         # create pp job server
         job_server = pp.Server()#ppservers=("137.229.27.61",""))
         
         # prepare sample and time arrays 
-
         times_samples = [(self._CalcSamples(r)) for r in self.ranges]
         self.nlag[:] = [len(samps[0]) for samps in times_samples]
         
@@ -256,7 +261,7 @@ class LombFit:
         funcs = (make_spacecube, TimeCube, find_fwhm, calculate_bayes, calc_zoomvar)
 
         for r in self.ranges:
-            args = (times_samples[r][1], times_samples[r][0], self.freqs, self.alfs, 1, self.maxfreqs, cubecache)
+            args = (times_samples[r][1], times_samples[r][0], self.freqs, self.alfs, 1, self.maxfreqs, cubecache, pulses)
             jobs.append(job_server.submit(iterative_bayes, args, funcs, libs))
         
         # wait for jobs to complete
@@ -292,8 +297,15 @@ class LombFit:
 
 
     # finds returns in spectrum and records cell velocity
-    def CalculatePeaks(self, rgate, cubecache, env_model = 1):
+    def CalculatePeaks(self, rgate, cubecache, env_model = 1, otherpulses = None):
         t, samples = self._CalcSamples(rgate)
+        
+        if otherpulses:
+            for op in otherpulses:
+                ot, osamples = op._CalcSamples(rgate)
+                pdb.set_trace()
+                t = np.concatenate(t, ot)
+                samples = np.concatenate(samples, osamples)
 
         # calcuate generalized lomb-scargle periodogram iteratively
         if env_model == 1:
@@ -479,8 +491,10 @@ if __name__ == '__main__':
     parser.add_argument("--starttime", help="input RawACF file to convert")
     parser.add_argument("--endtime", help="input RawACF file to convert")
     parser.add_argument("--parallel", help="use pp to parallelize pulse fitting", action="store_true", default=0) 
-    args = parser.parse_args() 
+    parser.add_argument("--pulses", help="calculate lomb over multiple pulses", default=1) 
 
+    args = parser.parse_args() 
+    args.pulses = int(args.pulses)
     # good time at McM is 3/20/2013, 8 AM UTC
     #infile = '/mnt/windata/sddata/0207/all.rawacf'
     # todo: add converging fits
@@ -493,7 +507,7 @@ if __name__ == '__main__':
         outfilename = args.outfile
 
     times = dfile.times
-    cubecache = TimeCube(pulses = PULSES)
+    cubecache = TimeCube(pulses = args.pulses)
     print DATA_DIR + outfilename
     hdf5file = h5py.File(DATA_DIR + outfilename, 'w')
 
@@ -506,7 +520,14 @@ if __name__ == '__main__':
             fit.ParallelProcessPulse()
         else:
             # alternately, use non-parallelized version (easier to debug/optimize)
-            fit.ProcessPulse(cubecache)
+            if args.pulses > 1: 
+                if i % args.pulses == 0:
+                    nextpulses = [LombFit(dfile[times[i+p]]) for p in range(1,args.pulses)]
+                    fit.ProcessMultiPulse(cubecache, nextpulses)
+                else:
+                    continue
+            else:
+                fit.ProcessPulse(cubecache)
 
         fit.WriteLSSFit(hdf5file)
 
