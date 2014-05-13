@@ -261,7 +261,7 @@ class LombFit:
         funcs = (make_spacecube, TimeCube, find_fwhm, calculate_bayes, calc_zoomvar)
 
         for r in self.ranges:
-            args = (times_samples[r][1], times_samples[r][0], self.freqs, self.alfs, 1, self.maxfreqs, cubecache, pulses)
+            args = (times_samples[r][1], times_samples[r][0], self.freqs, self.alfs, 1, self.maxfreqs, cubecache)
             jobs.append(job_server.submit(iterative_bayes, args, funcs, libs))
         
         # wait for jobs to complete
@@ -303,9 +303,8 @@ class LombFit:
         if otherpulses:
             for op in otherpulses:
                 ot, osamples = op._CalcSamples(rgate)
-                pdb.set_trace()
-                t = np.concatenate(t, ot)
-                samples = np.concatenate(samples, osamples)
+                t = np.concatenate([t, ot])
+                samples = np.concatenate([samples, osamples])
 
         # calcuate generalized lomb-scargle periodogram iteratively
         if env_model == 1:
@@ -507,7 +506,7 @@ if __name__ == '__main__':
         outfilename = args.outfile
 
     times = dfile.times
-    cubecache = TimeCube(pulses = args.pulses)
+    cubecache = TimeCube()
     print DATA_DIR + outfilename
     hdf5file = h5py.File(DATA_DIR + outfilename, 'w')
 

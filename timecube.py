@@ -13,11 +13,10 @@ import pdb
 # creating these is expensive and RAM is cheap, so...
 
 class TimeCube:
-    def __init__(self, maxsize = 20, pulses = 1):
+    def __init__(self, maxsize = 20):
         self.cubecache = {}
         self.cubetimes = {}
         self.maxsize = maxsize
-        self.pulses = pulses
        
     def _cubeparam_key(self, t, f, alfs, env_model):
         # there must be better ways of doing this...
@@ -30,7 +29,7 @@ class TimeCube:
         key = self._cubeparam_key(t,f,alfs,env_model) 
 
         if not key in self.cubecache:
-            self.cubecache[key] = make_spacecube(t, f, alfs, env_model, self.pulses)
+            self.cubecache[key] = make_spacecube(t, f, alfs, env_model)
             
             # check to see if cube cache is too big. it is, delete the least recently used cube
             self.cubetimes[datetime.datetime.now()] = key 
@@ -42,10 +41,9 @@ class TimeCube:
 
         return self.cubecache[key] 
 
-def make_spacecube(t, f, alfs, env_model, pulses = 1):
+def make_spacecube(t, f, alfs, env_model):
     # create ce_matrix and se_matrix..
     # sin and cos(w * t) * exp(-alf * t) cubes 
-    t = np.concatenate([t] * pulses)
     omegas = 2 * np.pi * f
     c_matrix = np.cos(np.outer(omegas, t))
     s_matrix = np.sin(np.outer(omegas, t))

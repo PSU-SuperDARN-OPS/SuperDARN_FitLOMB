@@ -76,11 +76,11 @@ def find_fwhm(ia, pt_apex,log = True,factor=.5,da=1):
 # returns fit, with model parameters, a frequency, and a significance
 # for simultaneous complex samples, normalized frequency, ts normalized to 1s
 #@profile
-def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = False, pulses = 1, zoom = 10., zoomspan = 5):
+def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = False, zoom = 10., zoomspan = 5):
     fits = []
     cubecache = False
     if not cubecache:
-        timecube = (make_spacecube(t, freqs, alfs, env_model, pulses = pulses))
+        timecube = (make_spacecube(t, freqs, alfs, env_model))
     else:
         timecube = False
     
@@ -98,7 +98,7 @@ def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = Fa
             zfreqs = calc_zoomvar(freqs, fit['frequency'], zoomspan, zoom)
             zalfs = calc_zoomvar(freqs, fit['alpha'], zoomspan, zoom)
             zoomcube = (make_spacecube(t, zfreqs, zalfs, env_model))
-            fit = calculate_bayes(samples, t, zfreqs, zalfs, env_model, cubecache = False, timecube = zoomcube, pulses = pulses)
+            fit = calculate_bayes(samples, t, zfreqs, zalfs, env_model, cubecache = False, timecube = zoomcube)
 
             # use old fwhm if fwhm was bounded by zoom level, revert to old fwhm (it wasn't a good fit anyways..)
             if fit['frequency_fwhm_bounded']:
@@ -122,7 +122,7 @@ def calc_zoomvar(ar, center, zoomspan, zoom):
 # to profile:
 # kernprof.py -l foo.py
 # python -m line_profiler foo.py.lprof
-def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = False, pulses = 1):
+def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = False):
     N = len(t) * 2.# see equation (10) in [4]
     m = 2
 
@@ -134,7 +134,7 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     elif timecube:
         ce_matrix, se_matrix, CS_f = timecube 
     else:
-        ce_matrix, se_matrix, CS_f = make_spacecube(t, f, alfs, env_model, pulses = pulses)
+        ce_matrix, se_matrix, CS_f = make_spacecube(t, f, alfs, env_model)
 
     # create R_f and I_f (12) and (13) in [4]
     # these reduce to the real and complex parts of the fourier transform for uniformly sampled data
