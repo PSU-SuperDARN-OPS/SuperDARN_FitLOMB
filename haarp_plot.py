@@ -27,7 +27,6 @@ ALLBEAMS = [str(b) for b in range(BEAMS)]
 MINRANGE = 0 
 MAXRANGE = 3000
 TIMEINT = 120
-TIMESHIFT = datetime.timedelta(hours = 8) 
 RADAR = 'kod.c'
 BEAMS = [9]#ALLBEAMS# [9]
 cdict3 = {'red':  ((0.0, 0.0, 0.0),
@@ -65,7 +64,7 @@ def prettyify():
 # gets a scalar value, possibly across all beams
 def getScalar(lombfit, param, beams, starttime, endtime):
     pulses = getPulses(lombfit, beams, starttime, endtime)
-    times = [datetime.datetime.fromtimestamp(p.attrs['epoch.time']) for p in pulses]
+    times = [datetime.datetime.utcfromtimestamp(p.attrs['epoch.time']) for p in pulses]
 
     return [p.attrs[param] for p in pulses], times
 
@@ -74,7 +73,7 @@ def getScalar(lombfit, param, beams, starttime, endtime):
 def getParam(lombfit, beam, param, starttime, endtime,  maskparam = False, blank = WHITE):
     pulses = getPulses(lombfit, beam, starttime, endtime)#[beam])
      
-    times = [datetime.datetime.fromtimestamp(p.attrs['epoch.time']) for p in pulses]
+    times = [datetime.datetime.utcfromtimestamp(p.attrs['epoch.time']) for p in pulses]
     rgates = [p.attrs['nrang'] for p in pulses] 
     ranges = [np.arange(p.attrs['nrang']) * p.attrs['rsep'] + p.attrs['frang'] for p in pulses]
 
@@ -121,10 +120,9 @@ def createMergefile(radar, starttime, endtime, datadir):
 
 def PlotFreq(lombfit, beams, starttime, endtime, image = False):
     f, t = getScalar(lombfit, 'tfreq', beams, starttime, endtime)
-    times = [ti + TIMESHIFT for ti in t] # correct for python automatically adding timezones... 
-    x = dates.date2num(times) 
+    x = dates.date2num(t) 
     ax = plt.gca()
-    hfmt = dates.DateFormatter('%m/%d %H:%M', tz = None) 
+    hfmt = dates.DateFormatter('%m/%d %H:%M') 
     ax.xaxis.set_major_locator(dates.MinuteLocator(interval = TIMEINT))
     ax.xaxis.set_major_formatter(hfmt)
     plt.plot(x, f)
@@ -137,7 +135,7 @@ def PlotFreq(lombfit, beams, starttime, endtime, image = False):
     if not image:
         plt.show()
     else:
-        imgname = get_imagename(times[0], times[-1], RADAR, 'freq')
+        imgname = get_imagename(t[0], t[-1], RADAR, 'freq')
         plt.savefig(imgname, bbox_inches='tight')
         plt.clf()
 
@@ -163,10 +161,6 @@ def getPulses(lombfit, beams, starttime, endtime):
     return pulses
 
 def PlotRTI(times, ranges, z, cmap, lim):
-    times = [t + TIMESHIFT for t in times] # correct for python automatically adding timezones... 
-    # TODO: replace with more robust solution..
-    # see https://stackoverflow.com/questions/8777753/converting-datetime-date-to-utc-timestamp-in-python/8778548#8778548
-
     for i in range(1):
         x = dates.date2num(times) 
         maxranges = ranges[np.argmax([len(r) for r in ranges])]
@@ -190,7 +184,7 @@ def PlotRTI(times, ranges, z, cmap, lim):
         plt.axis([x.min(), x.max(), y.min(), y.max()])
         plt.clim(lim)
         ax = plt.gca()
-        hfmt = dates.DateFormatter('%m/%d %H:%M', tz = None) 
+        hfmt = dates.DateFormatter('%m/%d %H:%M') 
         ax.xaxis.set_major_locator(dates.MinuteLocator(interval = TIMEINT))
         ax.xaxis.set_major_formatter(hfmt)
         ax.set_ylim(bottom = MINRANGE)
@@ -299,7 +293,7 @@ def PlotTime(radar, starttime, endtime, directory, beams):
 if __name__ == '__main__':
     prettyify() # set matplotlib parameters for larger text
 
-    plot_times = {datetime.datetime(2013,9,6,0,00) : datetime.datetime(2014,9,7,23,59)}
+    plot_times = {datetime.datetime(2013,9,6,0,00) : datetime.datetime(2014,9,6,10,00)}
 
     
     # set of times to plot, start:stop
