@@ -76,7 +76,7 @@ def find_fwhm(ia, pt_apex,log = True,factor=.5,da=1):
 # returns fit, with model parameters, a frequency, and a significance
 # for simultaneous complex samples, normalized frequency, ts normalized to 1s
 #@profile
-def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = False, zoom = 10., zoomspan = 5):
+def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = False, zoom = 10., zoomspan = 5,max_iterations=10):
     fits = []
     cubecache = False
     if not cubecache:
@@ -87,26 +87,99 @@ def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = Fa
     for i in range(maxfreqs):
         # calculate initial fit
         fit = calculate_bayes(samples, t, freqs, alfs, env_model, cubecache = cubecache, timecube = timecube)
-         
+        zoom_iteration=0 
+ 
         if zoom:
+            #print "zoom: enabled"
             # this may disrupt fwhm calculations
             # zoom frequency range in on fit, recalculate bayes for increased resolution
             # don't cache zoomed timecubes
             coarsefwhm_f = fit['frequency_fwhm']
             coarsefwhm_a = fit['alpha_fwhm']
+            coarse_f_lims=fit['frequency_lims']
+            coarse_a_lims=fit['alpha_lims']
+            coarse_p=fit["p"].copy()
 
-            zfreqs = calc_zoomvar(freqs, fit['frequency'], zoomspan, zoom)
-            zalfs = calc_zoomvar(freqs, fit['alpha'], zoomspan, zoom)
-            zoomcube = (make_spacecube(t, zfreqs, zalfs, env_model))
-            fit = calculate_bayes(samples, t, zfreqs, zalfs, env_model, cubecache = False, timecube = zoomcube)
+            f_zoom_needed=False
+            a_zoom_needed=False
+            f_delta=fit['frequency_lims'][1]-fit['frequency_lims'][0]
+            a_delta=fit['alpha_lims'][1]-fit['alpha_lims'][0]
+            if f_delta > 0.0:
+              f_ratio=coarsefwhm_f/(f_delta)
+              if f_ratio < 0.3 : f_zoom_needed=True
+              else: f_zoom_needed=False
+            else:  
+                f_ratio=np.nan
+                f_zoom_needed=False
+            if a_delta > 0.0:
+              a_ratio=coarsefwhm_a/(a_delta)
+              if a_ratio < 0.3 : a_zoom_needed=True
+              else: a_zoom_needed=False
+            else:  
+                a_ratio=np.nan
+                a_zoom_needed=False
 
-            # use old fwhm if fwhm was bounded by zoom level, revert to old fwhm (it wasn't a good fit anyways..)
-            if fit['frequency_fwhm_bounded']:
-                fit['frequency_fwhm'] = coarsefwhm_f
-            if fit['alpha_fwhm_bounded']:
-                fit['alpha_fwhm'] = coarsefwhm_a
+            #print "Coarse Ratio:",f_ratio,a_ratio
+            #print "Coarse F_lims:",fit['frequency_lims']
+            #print "Coarse F_fhwm:",fit['frequency_fwhm'],f_delta
+            #print "Coarse A_lims:",fit['alpha_lims']
+            #print "Coarse A_fhwm:",fit['alpha_fwhm'],a_delta
+            lastfwhm_f=coarsefwhm_f 
+            lastfwhm_a=coarsefwhm_a 
+            zfreqs=freqs
+            zalfs=alfs
+            while (f_zoom_needed or a_zoom_needed) and (zoom_iteration < max_iterations):
+                 #print "Zoom iteration:",zoom_iteration,zfreqs[0],zfreqs[-1]
+                 zoom_iteration+=1
+                 if f_zoom_needed:
+                   #print "  F Zoom Needed"
+                   zfreqs = calc_zoomvar(zfreqs, fit['frequency'], zoomspan, zoom)
+                 if a_zoom_needed:
+                   #print "  A Zoom Needed"
+                   zalfs = calc_zoomvar(zalfs, fit['alpha'], zoomspan, zoom)
+                 zoomcube = (make_spacecube(t, zfreqs, zalfs, env_model))
+                 fit = calculate_bayes(samples, t, zfreqs, zalfs, env_model, cubecache = False, timecube = zoomcube)
+
+                 # use old fwhm if fwhm was bounded by zoom level, revert to old fwhm (it wasn't a good fit anyways..)
+                 if fit['frequency_fwhm_bounded']:
+                     #fit['frequency_fwhm'] = lastfwhm_f
+                     #print "warning: frequency_fwhm_bounded"
+                     pass 
+                 if fit['alpha_fwhm_bounded']:
+                     #fit['alpha_fwhm'] = lastfwhm_a
+                     #print "warning: alpha_fwhm_bounded"
+                     pass
+                 lastfwhm_f = fit['frequency_fwhm']
+                 lastfwhm_a = fit['alpha_fwhm']
+                 f_zoom_needed=False
+                 a_zoom_needed=False
+                 f_delta=fit['frequency_lims'][1]-fit['frequency_lims'][0]
+                 a_delta=fit['alpha_lims'][1]-fit['alpha_lims'][0]
+                 if f_delta > 0.0:
+                   f_ratio=lastfwhm_f/(f_delta)
+                   if f_ratio < 0.3 : f_zoom_needed=True
+                   else: f_zoom_needed=False
+                 else:  
+                     f_ratio=np.nan
+                     f_zoom_needed=False
+                 if a_delta > 0.0:
+                    a_ratio=lastfwhm_a/(a_delta)
+                    if a_ratio < 0.3 : a_zoom_needed=True
+                    else: a_zoom_needed=False
+                 else:  
+                     a_ratio=np.nan
+                     a_zoom_needed=False
+                 #print "  Zoom Ratio:",f_ratio,a_ratio
+                 #print "    F_lims:",fit['frequency_lims']
+                 #print "    F_fhwm:",fit['frequency_fwhm'],f_delta
+                 #print "    A_lims:",fit['alpha_lims']
+                 #print "    A_fhwm:",fit['alpha_fwhm'],a_delta
 
         fit['fit_snr'] = np.mean(fit['signal'] ** 2) / np.mean(samples ** 2)
+        fit["coarse_p"]=coarse_p.copy()
+        fit["coarse_frequency_lims"]=coarse_f_lims
+        fit["coarse_alpha_lims"]=coarse_a_lims
+        fit["zoom_iteration"]=zoom_iteration
         fits.append(fit)
         samples -= fit['signal']
     return fits
@@ -153,7 +226,6 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     # use logarithms to avoid underflow (** 20 will drown large probabilities..)
     # about 30% of execution time is spent here
     P_f = np.log10(N * dbar2 - hbar2)  * ((2 - N) / 2.) - np.log10(CS_f)
-
     #P_f = ne.evaluate('log10((N * dbar2 - hbar2) ** ((2 - N) / 2.)) - log10(CS_f)') # (it takes a little longer to use numexpr..)
 
     # don't bother de-logging, we don't use this anyways.
@@ -167,26 +239,30 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
 
     maxidx = np.argmax(P_f)
     max_tuple = np.unravel_index(maxidx, P_f.shape)
+    alf_slice = P_f[:,max_tuple[1]]
+    freq_slice = P_f[max_tuple[0],:]
 
-    alf_slice = P_f[max_tuple[0],:]
-    freq_slice = P_f[:,max_tuple[1]]
-
-    alf_fwhm, a_fwhm_bounded = find_fwhm(alf_slice, max_tuple[1])
-    freq_fwhm, f_fwhm_bounded = find_fwhm(freq_slice, max_tuple[0])
+    alf_fwhm, a_fwhm_bounded = find_fwhm(alf_slice, max_tuple[0])
+    freq_fwhm, f_fwhm_bounded = find_fwhm(freq_slice, max_tuple[1])
     # TODO: add comparison of input samples to std deviation of input samples 
 
     fit = {}
     fit['amplitude'] = (R_f[max_tuple] + I_f[max_tuple]) / CS_f[max_tuple] 
     fit['amplitude_error_unscaled'] = CS_f[max_tuple]
     fit['frequency'] = f[max_tuple[1]]
-    fit['frequency_fwhm'] = freq_fwhm * abs(freq_slice[1] - freq_slice[0])
+    if len(freq_slice) > 1 : fit['frequency_fwhm'] = freq_fwhm * abs(freq_slice[1] - freq_slice[0])
+    else: fit['frequency_fwhm'] = np.nan 
     fit['frequency_fwhm_bounded'] = f_fwhm_bounded
     fit['alpha'] = alfs[max_tuple[0]] 
-    fit['alpha_fwhm'] = alf_fwhm * abs(alf_slice[1] - alf_slice[0])
+    if len(alf_slice) > 1 : fit['alpha_fwhm'] = alf_fwhm * abs(alf_slice[1] - alf_slice[0])
+    else: fit['alpha_fwhm'] = np.nan 
     fit['alpha_fwhm_bounded'] = a_fwhm_bounded
     fit['samples'] = s.copy()
     fit['t'] = t.copy()
     fit['signal'] = fit['amplitude'] * np.exp(1j * 2 * np.pi * fit['frequency'] * t) * np.exp(-fit['alpha'] * t)
+    fit['p'] = P_f.copy()
+    fit['frequency_lims'] = (min(f),max(f)) 
+    fit['alpha_lims'] = (min(alfs),max(alfs)) 
     return fit 
 
     # calculate amplitude estimate from A_est[max] = R_est[max] / C_est[max]
@@ -210,18 +286,34 @@ if __name__ == '__main__':
     sin1 = a1 * np.exp(1j * 2 * np.pi * f1 * t) * np.exp(-alf1 * t)
     sin2 = a2 * np.exp(1j * 2 * np.pi * f2 * t) * np.exp(-alf2 * t)
 
-    samples = sin1 + sin2
+    samples = sin1 
+    plt.figure(1)
+    plt.plot(np.real(samples),label="Real")
+    plt.plot(np.imag(samples),label="Imag")
 
-    freqs = np.linspace(-fs/2, fs/2, 40 * len(t))
-    alfs = np.linspace(0,6, 30 * len(t))
-
-    fits = iterative_bayes(samples, t, freqs, alfs, 1, 2)
+    freqs = np.linspace(-fs/2, fs/2, 50)
+    alfs = np.linspace(0,6, 20)
+    fits = iterative_bayes(samples, t, freqs, alfs, 1, 1)
     for fit in fits:
         print 'amp: ' + str(fit['amplitude'])
         print 'freq: ' + str(fit['frequency'])
+        print 'freq_fwhm: ' + str(fit['frequency_fwhm'])
+        print 'freq_lims: ', fit['frequency_lims']
         print 'alf: ' + str(fit['alpha'])
-
-    plt.plot(np.real(samples))
-    plt.plot(np.imag(samples))
+        print 'alf_fwhm: ' + str(fit['alpha_fwhm'])
+        print 'alpha_lims: ', fit['alpha_lims']
+        print 'coarse_p:', fit['coarse_p'].shape
+        print 'zoom iteration:' + str(fit['zoom_iteration'])
+        print 'p:', fit['p'].shape
+        model=fit['amplitude']*np.exp(1j * 2 * np.pi * fit['frequency'] * t) * np.exp(-fit['alpha'] * t)
+        plt.figure(1)
+        plt.plot(np.real(model),label="Fit Real")
+        plt.plot(np.imag(model),label="Fit Imag")
+        plt.figure(2)
+        plt.imshow(fit['coarse_p'],origin="lower",aspect='auto')
+        plt.figure(3)
+        plt.imshow(fit['p'],origin="lower",aspect='auto')
+    plt.figure(1)
+    plt.legend()
 
     plt.show()
