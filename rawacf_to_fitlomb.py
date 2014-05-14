@@ -2,7 +2,11 @@
 # functions to calculate a fitlomb (generalized lomb-scargle peridogram) from a rawacf
 # parallized with python pp, possible to parallelize over the network
 # mit license
-# TODO: ADD ERROR SCALED BY NUMBER OF SAMPLES
+
+# TODO: look at number of zooms
+# TODO: still store std deviation
+# TODO: move raw data to ARSC, process on their machines
+
 import argparse
 
 from sd_data_tools import *
@@ -25,9 +29,9 @@ import pp
 from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes, calc_zoomvar
 
 FITLOMB_REVISION_MAJOR = 0
-FITLOMB_REVISION_MINOR = 4
+FITLOMB_REVISION_MINOR = 5
 ORIGIN_CODE = 'rawacf_to_fitlomb.py'
-DATA_DIR = './jefdata/'
+DATA_DIR = './testdata/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
 
 I_OFFSET = 0
@@ -113,8 +117,8 @@ class LombFit:
         self.w_thresh = 90. # blanchard, 2009
         
         # threshold on power (snr), spectral width std error m/s, and velocity std error m/s for quality flag
-        self.qwle_thresh = 35
-        self.qvle_thresh = 35
+        self.qwle_thresh = 90
+        self.qvle_thresh = 90
         self.qpwr_thresh = 2
         
         # threshold (snr) to keep data
@@ -122,8 +126,8 @@ class LombFit:
 
         # thresholds on velocity and spectral width for ionospheric scatter flag (m/s)
         self.wimin_thresh = 100
-        self.wimax_thresh = 1100
-        self.vimax_thresh = 1000
+        self.wimax_thresh = MAX_W - 100
+        self.vimax_thresh = MAX_V - 100
         self.vimin_thresh = 100
        
         # initialize empty arrays for fitted parameters 
@@ -132,14 +136,17 @@ class LombFit:
 
         self.sd_s       = np.zeros([self.nranges, self.maxfreqs])
         self.w_s_e      = np.zeros([self.nranges, self.maxfreqs])
+        self.w_s_std    = np.zeros([self.nranges, self.maxfreqs])
         self.w_s        = np.zeros([self.nranges, self.maxfreqs])
         self.p_s        = np.zeros([self.nranges, self.maxfreqs])
         self.p_s_e      = np.zeros([self.nranges, self.maxfreqs])
         self.v_s        = np.zeros([self.nranges, self.maxfreqs])
         self.v_s_e      = np.zeros([self.nranges, self.maxfreqs])
+        self.v_s_std    = np.zeros([self.nranges, self.maxfreqs])
 
         self.sd_l       = np.zeros([self.nranges, self.maxfreqs])
         self.w_l_e      = np.zeros([self.nranges, self.maxfreqs])
+        self.w_l_std    = np.zeros([self.nranges, self.maxfreqs])
         self.w_l        = np.zeros([self.nranges, self.maxfreqs])
 
         self.fit_snr    = np.zeros([self.nranges, self.maxfreqs])
@@ -148,6 +155,7 @@ class LombFit:
         self.p_l_e      = np.zeros([self.nranges, self.maxfreqs])
         self.v_l        = np.zeros([self.nranges, self.maxfreqs])
         self.v_l_e      = np.zeros([self.nranges, self.maxfreqs])
+        self.v_l_std      = np.zeros([self.nranges, self.maxfreqs])
 
         self.gflg       = np.zeros([self.nranges, self.maxfreqs])
         self.iflg       = np.zeros([self.nranges, self.maxfreqs])
@@ -208,16 +216,20 @@ class LombFit:
         add_compact_dset(hdf5file, groupname, 'p_l_e', np.float32(self.p_l_e), h5py.h5t.NATIVE_FLOAT)
         add_compact_dset(hdf5file, groupname, 'w_l', np.float32(self.w_l), h5py.h5t.NATIVE_FLOAT)
         add_compact_dset(hdf5file, groupname, 'w_l_e', np.float32(self.w_l_e), h5py.h5t.NATIVE_FLOAT)
+        add_compact_dset(hdf5file, groupname, 'w_l_std', np.float32(self.w_l_std), h5py.h5t.NATIVE_FLOAT)
         add_compact_dset(hdf5file, groupname, 'v', np.float32(self.v_l), h5py.h5t.NATIVE_FLOAT)
         add_compact_dset(hdf5file, groupname, 'v_e', np.float32(self.v_l_e), h5py.h5t.NATIVE_FLOAT)
+        add_compact_dset(hdf5file, groupname, 'v_l_std', np.float32(self.v_l_std), h5py.h5t.NATIVE_FLOAT)
         
         if CALC_SIGMA:
             add_compact_dset(hdf5file, groupname, 'p_s', np.float32(self.p_s), h5py.h5t.NATIVE_FLOAT)
             add_compact_dset(hdf5file, groupname, 'p_s_e', np.float32(self.p_s_e), h5py.h5t.NATIVE_FLOAT)
             add_compact_dset(hdf5file, groupname, 'w_s', np.float32(self.w_s), h5py.h5t.NATIVE_FLOAT)
             add_compact_dset(hdf5file, groupname, 'w_s_e', np.float32(self.w_s_e), h5py.h5t.NATIVE_FLOAT)
+            add_compact_dset(hdf5file, groupname, 'w_s_std', np.float32(self.w_s_std), h5py.h5t.NATIVE_FLOAT)
             add_compact_dset(hdf5file, groupname, 'v_s', np.float32(self.v_s), h5py.h5t.NATIVE_FLOAT)
             add_compact_dset(hdf5file, groupname, 'v_s_e', np.float32(self.v_s_e), h5py.h5t.NATIVE_FLOAT)
+            add_compact_dset(hdf5file, groupname, 'v_s_std', np.float32(self.v_s_std), h5py.h5t.NATIVE_FLOAT)
             
 
 
@@ -328,7 +340,8 @@ class LombFit:
 
                 # approximate alpha error by taking half of range of alphas covered in fwhm
                 # results in standard deviation
-                self.w_l_e[rgate,i] = (((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA) / np.sqrt(N)
+                self.w_l_std[rgate,i] = (((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA)
+                self.w_l_e[rgate,i] = self.w_l_std[rgate,i] / np.sqrt(N)
                 
                 # record ratio of power in signal versus power in fitted signal
                 self.fit_snr[rgate,i] = fit['fit_snr']
@@ -343,7 +356,9 @@ class LombFit:
                 self.v_l[rgate,i] = v_l
                 # approximate velocity error as half the range of velocities covered by fwhm 
                 # "nonuniform sampling: bandwidth and aliasing", page 25
-                self.v_l_e[rgate,i] = ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA) / np.sqrt(N)
+
+                self.v_l_std[rgate,i] = ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA)
+                self.v_l_e[rgate,i] = self.v_l_std[rgate,i] / np.sqrt(N)
                 
                 # for information on setting surface/ionospheric scatter thresholds, see
                 # A new approach for identifying ionospheric backscatterin midlatitude SuperDARN HF radar observations
@@ -371,14 +386,18 @@ class LombFit:
                     np.append(self.sd_s[rgate],0) # TODO: what is a reasonable value for this? 
                      
                     self.w_s[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.tfreq * 1e3)) 
-                    self.w_s_e[rgate,i] = (((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA) / np.sqrt(N)
+
+                    self.w_s_std[rgate,i] = (((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA)
+                    self.w_s_e[rgate,i] = self.w_s_std[rgate,i] / np.sqrt(N)
                     
                     self.p_s[rgate,i] = fit['amplitude'] / self.noise
                     self.p_s_e[rgate,i] = np.sqrt((self.noise ** 2)/fit['amplitude_error_unscaled'])/self.noise # this may be scaled wrong..
 
                     v_s = (fit['frequency'] * C) / (2 * self.tfreq * 1e3)
                     self.v_s[rgate,i] = v_s
-                    self.v_s_e[rgate,i] = ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA) / np.sqrt(N)
+
+                    self.v_s_std[rgate,i] = ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA)
+                    self.v_s_e[rgate,i] = self.v_s_std[rgate,i] / np.sqrt(N)
 
                 self.p_s = 10 * np.log10(self.p_s)
 

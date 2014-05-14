@@ -51,7 +51,6 @@ def make_spacecube(t, f, alfs, env_model):
     # create cube of time by frequency with no decay
     c_cube = np.tile(c_matrix, (len(alfs),1,1))
     s_cube = np.tile(s_matrix, (len(alfs),1,1))
-
     # about 80% of execution time spent here..
     # ~ 400000
     # kernprof.py -l iterative_bayes.py

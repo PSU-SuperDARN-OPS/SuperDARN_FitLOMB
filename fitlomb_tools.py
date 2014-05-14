@@ -47,10 +47,10 @@ cdict3 = {'red':  ((0.0, 0.0, 0.0),
         }
 plt.register_cmap(name='SD_V', data=cdict3)
 
-QWMIN = 40 # m/s
-QVMIN = 35 # m/s
+QWMIN = 100# m/s
+QVMIN = 100 # m/s
 PMIN = 3 # dB
-WMAX = 1100 # m/s
+WMAX = 1000 # m/s
 WMIN = -WMAX 
 VMAX = 1500 # m/s
 VMIN = -VMAX
@@ -76,7 +76,6 @@ def getParam(lombfit, beam, param, starttime, endtime,  maskparam = False, blank
     times = [datetime.datetime.utcfromtimestamp(p.attrs['epoch.time']) for p in pulses]
     rgates = [p.attrs['nrang'] for p in pulses] 
     ranges = [np.arange(p.attrs['nrang']) * p.attrs['rsep'] + p.attrs['frang'] for p in pulses]
-
     # powers is long max(ranges) in case the number of range gates changes over the file
     rtiparam = np.ones([len(times), max(rgates), MAX_LOMBDEPTH])
     
@@ -246,6 +245,19 @@ def Plot_v(lombfit, beam, starttime, endtime, cmap = plt.cm.get_cmap("SD_V"), im
         plt.savefig(imgname, bbox_inches='tight')
         plt.clf()
 
+def plot_vector(lombfit, beam, param, flag, starttime, endtime, vmax = 1500, vmin = -1500, cmap = plt.cm.get_cmap("SD_V"), image = False):
+    times, ranges, vec = getParam(lombfit, beam, param, starttime, endtime, maskparam = flag)
+    PlotRTI(times, ranges, vec, cmap, [vmin, vmax])
+    FormatRTI('time (UTC)', param, param, param)
+    if not image:
+        plt.show()
+    else:
+        imgname = get_imagename(times[0], times[-1], RADAR, param)
+        print imgname
+        plt.savefig(imgname, bbox_inches='tight')
+        plt.clf()
+
+
 # recalculate qflg to experiment with different data quality thresholds
 def remask(lombfit, starttime, endtime, beams, pmin, qwmin, qvmin, wmax, wmin, vmax, vmin, median = False):
     pulses = getPulses(lombfit, beams, starttime, endtime)
@@ -283,18 +295,22 @@ def PlotTime(radar, starttime, endtime, directory, beams):
     mergefile = createMergefile(RADAR, starttime, endtime, DATADIR)
     lombfit = h5py.File(mergefile, 'r+')
     
-    remask(lombfit, starttime, endtime, beams, PMIN, QWMIN, QVMIN, WMAX, WMIN, VMAX, VMIN)
+    #remask(lombfit, starttime, endtime, beams, PMIN, QWMIN, QVMIN, WMAX, WMIN, VMAX, VMIN, median = True)
 
     PlotFreq(lombfit, beams, starttime, endtime, image = True)
     Plot_p_l(lombfit, beams, starttime, endtime, image = True)
     Plot_w_l(lombfit, beams, starttime, endtime, image = True)
     Plot_v(lombfit, beams, starttime, endtime, image = True)
+
+
+    plot_vector(lombfit, beams, 'v_e' , '', starttime, endtime, vmax = 300, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
+    plot_vector(lombfit, beams, 'w_l_e' , '', starttime, endtime, vmax = 300, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
     lombfit.close()
 
 if __name__ == '__main__':
     prettyify() # set matplotlib parameters for larger text
 
-    plot_times = {datetime.datetime(2013,9,6,0,00) : datetime.datetime(2013,9,6,10,00)}
+    plot_times = {datetime.datetime(2013,3,20,0,00) : datetime.datetime(2013,3,20,23,59)}
 
     
     # set of times to plot, start:stop
