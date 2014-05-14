@@ -2,7 +2,7 @@
 # functions to calculate a fitlomb (generalized lomb-scargle peridogram) from a rawacf
 # parallized with python pp, possible to parallelize over the network
 # mit license
-
+# TODO: ADD ERROR SCALED BY NUMBER OF SAMPLES
 import argparse
 
 from sd_data_tools import *
@@ -27,18 +27,18 @@ from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes, calc_zo
 FITLOMB_REVISION_MAJOR = 0
 FITLOMB_REVISION_MINOR = 4
 ORIGIN_CODE = 'rawacf_to_fitlomb.py'
-DATA_DIR = './testdata/'
+DATA_DIR = './jefdata/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
 
 I_OFFSET = 0
 Q_OFFSET = 1
 
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
-MAX_V = 1000 # m/s, max velocity (doppler shift) to include in lomb
+MAX_V = 1500 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 1200 # m/s, max spectral width to include in lomb 
 C = 3e8
 
-CALC_SIGMA = True
+CALC_SIGMA = False 
 
 ALPHA_RES = 30 # m/s
 VEL_RES = 30 # m/s
@@ -317,16 +317,18 @@ class LombFit:
         # TODO: add exception checking to handle fit failures
         for rgate in self.ranges:
             for (i, fit) in enumerate(self.lfits[rgate]):
+                N = 2 * len(fit['t'])  
+
                 # calculate "lambda" parameters
                 np.append(self.sd_l[rgate],0) # TODO: what is a reasonable value for this? 
-                 
                 # see Effects of mixed scatter on SuperDARN convection maps near (1) for spectral width 
                 # see ros.3.6/codebase/superdarn/src.lib/tk/fitacf/src/fit_acf.c and do_fit.c
                 #self.w_l[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.t_pulse * 1e-6) * (self.tfreq * 1e3)) 
                 self.w_l[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.tfreq * 1e3)) 
 
                 # approximate alpha error by taking half of range of alphas covered in fwhm
-                self.w_l_e[rgate,i] = ((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA
+                # results in standard deviation
+                self.w_l_e[rgate,i] = (((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA) / np.sqrt(N)
                 
                 # record ratio of power in signal versus power in fitted signal
                 self.fit_snr[rgate,i] = fit['fit_snr']
@@ -341,7 +343,7 @@ class LombFit:
                 self.v_l[rgate,i] = v_l
                 # approximate velocity error as half the range of velocities covered by fwhm 
                 # "nonuniform sampling: bandwidth and aliasing", page 25
-                self.v_l_e[rgate,i] = (((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA
+                self.v_l_e[rgate,i] = ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA) / np.sqrt(N)
                 
                 # for information on setting surface/ionospheric scatter thresholds, see
                 # A new approach for identifying ionospheric backscatterin midlatitude SuperDARN HF radar observations
@@ -369,14 +371,14 @@ class LombFit:
                     np.append(self.sd_s[rgate],0) # TODO: what is a reasonable value for this? 
                      
                     self.w_s[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.tfreq * 1e3)) 
-                    self.w_s_e[rgate,i] = ((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA
+                    self.w_s_e[rgate,i] = (((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA) / np.sqrt(N)
                     
                     self.p_s[rgate,i] = fit['amplitude'] / self.noise
                     self.p_s_e[rgate,i] = np.sqrt((self.noise ** 2)/fit['amplitude_error_unscaled'])/self.noise # this may be scaled wrong..
 
                     v_s = (fit['frequency'] * C) / (2 * self.tfreq * 1e3)
                     self.v_s[rgate,i] = v_s
-                    self.v_s_e[rgate,i] = (((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA
+                    self.v_s_e[rgate,i] = ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA) / np.sqrt(N)
 
                 self.p_s = 10 * np.log10(self.p_s)
 
@@ -497,6 +499,9 @@ if __name__ == '__main__':
     # good time at McM is 3/20/2013, 8 AM UTC
     #infile = '/mnt/windata/sddata/0207/all.rawacf'
     # todo: add converging fits
+    if args.infile == None:
+        print 'error: no --infile arguement!'
+    
     dfile = DMapFile(files=[args.infile])
 
     if not args.outfile:
