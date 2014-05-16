@@ -173,14 +173,13 @@ def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = Fa
                  #print "    F_fhwm:",fit['frequency_fwhm'],f_delta
                  #print "    A_lims:",fit['alpha_lims']
                  #print "    A_fhwm:",fit['alpha_fwhm'],a_delta
-
-        fit['fit_snr'] = np.mean(fit['signal'] ** 2) / np.mean(samples ** 2)
+        samples -= fit['signal']
+        fit['fit_snr'] = np.mean(abs(fit['signal']) ** 2) / np.mean(abs(samples) ** 2)
         fit["coarse_p"]=coarse_p.copy()
         fit["coarse_frequency_lims"]=coarse_f_lims
         fit["coarse_alpha_lims"]=coarse_a_lims
         fit["zoom_iteration"]=zoom_iteration
         fits.append(fit)
-        samples -= fit['signal']
     return fits
 
 # calculates zoomed parameters

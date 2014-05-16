@@ -13,7 +13,7 @@ from pytz import timezone
 
 BEAMS = 16
 MAX_LOMBDEPTH = 2
-DATADIR = './jefdata/'
+DATADIR = './testdata/'
 PLOTDIR = './plots/'
 VEL_CMAP = plt.cm.RdBu
 FREQ_CMAP = plt.cm.spectral
@@ -68,6 +68,12 @@ def getScalar(lombfit, param, beams, starttime, endtime):
 
     return [p.attrs[param] for p in pulses], times
 
+# gets record times which can index pydarn dmaps
+def getRecordtimes(lombfit, beams, starttime, endtime):
+    pulses = getPulses(lombfit, beams, starttime, endtime)
+    rtimes = [datetime.datetime(p.attrs['time.yr'], p.attrs['time.mo'], p.attrs['time.dy'], p.attrs['time.hr'], p.attrs['time.mt'], p.attrs['time.sc'], p.attrs['time.us']) for p in pulses]
+    return rtimes
+
 # gets a parameter across the beam for the file with a mask
 # for example, param 'p_l' with maskparam 'qflg' will return a range x time x lombdepth array of power for the beam
 def getParam(lombfit, beam, param, starttime, endtime,  maskparam = False, blank = WHITE):
@@ -100,12 +106,11 @@ def createMergefile(radar, starttime, endtime, datadir):
 
     filename = radar + starttime.strftime('%Y%m%d') + 'to' + endtime.strftime('%Y%m%d') + '.hdf5'
     mergefile = h5py.File(datadir + filename, 'w')
-    while starttime < endtime + datetime.timedelta(days=1):
+    while starttime < endtime:
         globname = datadir + starttime.strftime('%Y%m%d.*.*.' + radar + '*.hdf5') 
         hdf5files = glob.glob(globname)
 
         for h5f in hdf5files:
-            print h5f
             f = h5py.File(h5f, 'r')
             for pulse in f['/']:
                 dset = pulse 
@@ -297,6 +302,7 @@ def PlotTime(radar, starttime, endtime, directory, beams):
     
     #remask(lombfit, starttime, endtime, beams, PMIN, QWMIN, QVMIN, WMAX, WMIN, VMAX, VMIN, median = True)
 
+    plot_vector(lombfit, beams, 'fit_snr' , '', starttime, endtime, vmax = 300, vmin = 0, cmap = POWER_CMAP, image=True)
     PlotFreq(lombfit, beams, starttime, endtime, image = True)
     Plot_p_l(lombfit, beams, starttime, endtime, image = True)
     Plot_w_l(lombfit, beams, starttime, endtime, image = True)
@@ -310,7 +316,7 @@ def PlotTime(radar, starttime, endtime, directory, beams):
 if __name__ == '__main__':
     prettyify() # set matplotlib parameters for larger text
 
-    plot_times = {datetime.datetime(2013,3,20,0,00) : datetime.datetime(2013,3,20,23,59)}
+    plot_times = {datetime.datetime(2013,9,6,0,00) : datetime.datetime(2013,9,6,23,59)}
 
     
     # set of times to plot, start:stop
@@ -347,21 +353,22 @@ if __name__ == '__main__':
     '''
     plot_zoomtimes = {}
     TIMEINT = 120 #
+    RADARS = ['mcm.a', 'mcm.b']#['mcm.a','adw.a', 'ade.a', 'kod.d', 'ksr.a']
+    for radar in RADARS:
+        for stime in plot_times.keys():
+            print 'plotting '  + str(stime)
+            #try:
+                #RADAR = 'kod.c'
+                #PlotTime(RADAR, stime, plot_times[stime], DATADIR, ['9'])
 
-    for stime in plot_times.keys():
-        print 'plotting '  + str(stime)
-        #try:
-            #RADAR = 'kod.c'
-            #PlotTime(RADAR, stime, plot_times[stime], DATADIR, ['9'])
+            RADAR = radar
+            PlotTime(RADAR, stime, plot_times[stime], DATADIR, BEAMS) 
 
-        RADAR = 'mcm.a'
-        PlotTime(RADAR, stime, plot_times[stime], DATADIR, ['8'])
-
-        #except:
-        #    plt.clf()
-        #    pass
-        #RADAR = 'kod.d'
-        #PlotTime(RADAR, stime, plot_times[stime], DATADIR, ALLBEAMS)
+            #except:
+            #    plt.clf()
+            #    pass
+            #RADAR = 'kod.d'
+            #PlotTime(RADAR, stime, plot_times[stime], DATADIR, ALLBEAMS)
 
     TIMEINT = 1
     MINRANGE = 0 

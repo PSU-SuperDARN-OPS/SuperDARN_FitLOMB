@@ -3,15 +3,17 @@
 # parallized with python pp, possible to parallelize over the network
 # mit license
 
-# TODO: look at number of zooms
-# TODO: still store std deviation
 # TODO: move raw data to ARSC, process on their machines
+
+# TODO: look at residual spread of fitacf and fitlomb to samples
+# TODO: look at variance of residual, compare with fitacf
+# TODO: convert to work with davitpy
+# TODO: add generalized timecube generation
 
 import argparse
 
 from sd_data_tools import *
 from pydmap import DMapFile, timespan, dt2ts, ts2dt
-from complex_lomb import *
 
 from timecube import TimeCube, make_spacecube
 
@@ -20,18 +22,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as dates
 import h5py
-
-from libfitacf import get_badsamples, get_badlags
-from scipy.optimize import curve_fit
-import scipy.signal as signal
+import lagstate
 import pp
-from badlag import lagstate 
+import pdb
+
+from libfitacf import get_badlags
 from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes, calc_zoomvar
 
 FITLOMB_REVISION_MAJOR = 0
-FITLOMB_REVISION_MINOR = 5
+FITLOMB_REVISION_MINOR = 6
 ORIGIN_CODE = 'rawacf_to_fitlomb.py'
-DATA_DIR = './baddata/'
+DATA_DIR = './testdata/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
 
 I_OFFSET = 0
@@ -42,7 +43,8 @@ MAX_V = 1500 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 1200 # m/s, max spectral width to include in lomb 
 C = 3e8
 
-CALC_SIGMA = False 
+CALC_SIGMA = True 
+KEEP_SAMPLES = False 
 
 ALPHA_RES = 30 # m/s
 VEL_RES = 30 # m/s
@@ -75,14 +77,13 @@ GROUP_ATTR_TYPES = [\
 class LombFit:
     def __init__(self, record):
         self.rawacf = record # dictionary copy of RawACF record
-        self.lags = range(self.rawacf['mplgs']) # range of lags
-        self.nlags = self.rawacf['mplgs'] # number of lags
+        self.mplgs = self.rawacf['mplgs'] # range of lags
         self.ranges = range(self.rawacf['nrang']) # range gates
         self.nrang = self.rawacf['nrang'] # range gates
         self.ptab = self.rawacf['ptab'] # (mppul length list): pulse table
         self.mppul = self.rawacf['mppul'] # number of pulses in sequence
         self.ltab = self.rawacf['ltab'] # (mplgs x 2 length list): lag table
-        self.t_first = self.rawacf['lagfr'] # lag to first range in us
+        self.lagfr = self.rawacf['lagfr'] # lag to first range in us
         self.mpinc = self.rawacf['mpinc'] # multi pulse increment (tau, basic lag time) 
         self.smsep = self.rawacf['smsep'] # sample separation in us
         self.txpl = self.rawacf['txpl'] # sample separation in us
@@ -146,13 +147,14 @@ class LombFit:
         self.w_l_std    = np.zeros([self.nrang, self.maxfreqs])
         self.w_l        = np.zeros([self.nrang, self.maxfreqs])
 
-        self.fit_snr    = np.zeros([self.nrang, self.maxfreqs])
+        self.fit_snr_l  = np.zeros([self.nrang, self.maxfreqs])
+        self.fit_snr_s  = np.zeros([self.nrang, self.maxfreqs])
 
         self.p_l        = np.zeros([self.nrang, self.maxfreqs])
         self.p_l_e      = np.zeros([self.nrang, self.maxfreqs])
         self.v_l        = np.zeros([self.nrang, self.maxfreqs])
         self.v_l_e      = np.zeros([self.nrang, self.maxfreqs])
-        self.v_l_std      = np.zeros([self.nrang, self.maxfreqs])
+        self.v_l_std    = np.zeros([self.nrang, self.maxfreqs])
 
         self.gflg       = np.zeros([self.nrang, self.maxfreqs])
         self.iflg       = np.zeros([self.nrang, self.maxfreqs])
@@ -217,7 +219,8 @@ class LombFit:
         add_compact_dset(hdf5file, groupname, 'v', np.float32(self.v_l), h5py.h5t.NATIVE_FLOAT)
         add_compact_dset(hdf5file, groupname, 'v_e', np.float32(self.v_l_e), h5py.h5t.NATIVE_FLOAT)
         add_compact_dset(hdf5file, groupname, 'v_l_std', np.float32(self.v_l_std), h5py.h5t.NATIVE_FLOAT)
-        
+        add_compact_dset(hdf5file, groupname, 'fit_snr_l', np.float32(self.fit_snr_l), h5py.h5t.NATIVE_FLOAT)
+
         if CALC_SIGMA:
             add_compact_dset(hdf5file, groupname, 'p_s', np.float32(self.p_s), h5py.h5t.NATIVE_FLOAT)
             add_compact_dset(hdf5file, groupname, 'p_s_e', np.float32(self.p_s_e), h5py.h5t.NATIVE_FLOAT)
@@ -227,7 +230,7 @@ class LombFit:
             add_compact_dset(hdf5file, groupname, 'v_s', np.float32(self.v_s), h5py.h5t.NATIVE_FLOAT)
             add_compact_dset(hdf5file, groupname, 'v_s_e', np.float32(self.v_s_e), h5py.h5t.NATIVE_FLOAT)
             add_compact_dset(hdf5file, groupname, 'v_s_std', np.float32(self.v_s_std), h5py.h5t.NATIVE_FLOAT)
-            
+            add_compact_dset(hdf5file, groupname, 'fit_snr_s', np.float32(self.fit_snr_s), h5py.h5t.NATIVE_FLOAT)
 
 
         # TODO: verify that the following vectors are not relevant for fitlomb: phi0, phi0_e, sd_l, sd_s, sd_phi
@@ -252,7 +255,10 @@ class LombFit:
 
         
     # do comparison plots of the lomb fit and fitacf in lagspace
-    def FitACFCompare(self, fitacfs, radar):
+    def FitACFCompare(self, fitacfs, radar, plot_lagspace = True):
+        # look at residual spread of fitacf and fitlomb to samples
+        # look at variance of residual, compare with 
+
         w_fitacf = []
         w_lomb = []
 
@@ -300,36 +306,37 @@ class LombFit:
             print ''
             if fit['alpha'] < 0:
                 pdb.set_trace()
+    
+            if plot_lagspace:
+                plt.rcParams.update({'legend.loc': 'best'})
+                plt.legend(fancybox=True)
+                plt.rcParams.update({'font.size': 12})
+                ymax = max(max(np.real(samples)),max(np.imag(samples))) * 3 / 1000
+                ymin = -ymax
+                xmin = min(t)
+                xmax = max(t)
 
-            plt.rcParams.update({'legend.loc': 'best'})
-            plt.legend(fancybox=True)
-            plt.rcParams.update({'font.size': 12})
-            ymax = max(max(np.real(samples)),max(np.imag(samples))) * 3 / 1000
-            ymin = -ymax
-            xmin = min(t)
-            xmax = max(t)
+                plt.subplot(2,1,1)
+                plt.scatter(tsamp,np.real(samples)/1000, s=20, c='r')
+                plt.plot(t,np.real(fitsignal)/1000, c='b')
+                plt.plot(t,np.real(facf)/1000, c ='m')
+                plt.legend(['fitlomb', 'fitacf', 'q samples'])
+                plt.ylabel('sample value')
+                plt.title('Comparison of FitACF and FitLOMB in lagspace\n' + radar + ' beam: ' + str(self.bmnum) + ' range: ' + str(s) + ', ' + self.rawacf['origin.time'])
+                plt.axis([xmin, xmax, ymin, ymax])            
 
-            plt.subplot(2,1,1)
-            plt.scatter(tsamp,np.real(samples)/1000, s=20, c='r')
-            plt.plot(t,np.real(fitsignal)/1000, c='b')
-            plt.plot(t,np.real(facf)/1000, c ='m')
-            plt.legend(['fitlomb', 'fitacf', 'q samples'])
-            plt.ylabel('sample value')
-            plt.title('Comparison of FitACF and FitLOMB in lagspace\n' + radar + ' beam: ' + str(self.bmnum) + ' range: ' + str(s) + ', ' + self.rawacf['origin.time'])
-            plt.axis([xmin, xmax, ymin, ymax])            
+                plt.subplot(2,1,2)
+                plt.scatter(tsamp,np.imag(samples)/1000, s=20, c='r')
+                plt.plot(t,np.imag(fitsignal)/1000, c='b')
+                plt.plot(t,np.imag(facf)/1000, c='m')
+                plt.legend(['fitlomb', 'fitacf', 'i samples'])
+                plt.ylabel('sample value')
+                plt.xlabel('lag time (seconds)')
 
-            plt.subplot(2,1,2)
-            plt.scatter(tsamp,np.imag(samples)/1000, s=20, c='r')
-            plt.plot(t,np.imag(fitsignal)/1000, c='b')
-            plt.plot(t,np.imag(facf)/1000, c='m')
-            plt.legend(['fitlomb', 'fitacf', 'i samples'])
-            plt.ylabel('sample value')
-            plt.xlabel('lag time (seconds)')
-
-            plt.axis([xmin, xmax, ymin, ymax])            
-            imgname = 'lagplots/' + radar + '_' + str(s) + '_' + str(calendar.timegm(self.recordtime.timetuple()) + int(self.rawacf['time.us'])/1e6) + '.png'
-            plt.savefig(imgname, bbox_inches='tight')
-            plt.clf()
+                plt.axis([xmin, xmax, ymin, ymax])            
+                imgname = 'lagplots/' + radar + '_' + str(s) + '_' + str(calendar.timegm(self.recordtime.timetuple()) + int(self.rawacf['time.us'])/1e6) + '.png'
+                plt.savefig(imgname, bbox_inches='tight')
+                plt.clf()
 
 
     def ParallelProcessPulse(self, cubecache = False, pulses = 1):
@@ -362,16 +369,16 @@ class LombFit:
 
     # get time and good complex samples for a range gate
     def _CalcSamples(self, rgate):
-        offset = self.nlags * rgate
+        offset = self.mplgs * rgate
 
         # see http://davit.ece.vt.edu/davitpy/_modules/pydarn/sdio/radDataTypes.html
-        i_lags = np.array(self.acfi[offset:offset+self.nlags])
-        q_lags = np.array(self.acfq[offset:offset+self.nlags])
+        i_lags = np.array(self.acfi[offset:offset+self.mplgs])
+        q_lags = np.array(self.acfq[offset:offset+self.mplgs])
         
-        good_lags = np.ones(self.nlags)
+        good_lags = np.ones(self.mplgs)
         good_lags[self.bad_lags[rgate] != 0] = 0
 
-        lags = map(lambda x : abs(x[1]-x[0]), self.ltab[0:self.nlags])
+        lags = map(lambda x : abs(x[1]-x[0]), self.ltab[0:self.mplgs])
 
         i_lags = i_lags[good_lags == True]
         q_lags = q_lags[good_lags == True]
@@ -417,7 +424,7 @@ class LombFit:
                 self.w_l_e[rgate,i] = self.w_l_std[rgate,i] / np.sqrt(N)
                 
                 # record ratio of power in signal versus power in fitted signal
-                self.fit_snr[rgate,i] = fit['fit_snr']
+                self.fit_snr_l[rgate,i] = fit['fit_snr']
 
                 # amplitude estimation, see bayesian analysis v: amplitude estimation, multiple well separated sinusoids
                 # bretthorst, equation 78, I'm probably doing this wrong...
@@ -469,6 +476,7 @@ class LombFit:
                     v_s = (fit['frequency'] * C) / (2 * self.tfreq * 1e3)
                     self.v_s[rgate,i] = v_s
 
+                    self.fit_snr_s[rgate,i] = fit['fit_snr']
                     self.v_s_std[rgate,i] = ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA)
                     self.v_s_e[rgate,i] = self.v_s_std[rgate,i] / np.sqrt(N)
 
@@ -524,32 +532,34 @@ class LombFit:
             self.noise = np.mean(noise_samples)
     
     # calculate and store bad lags
-    def CalcBadlags(self):
-        bad_lags = [[] for i in range(self.nrang)]
-        
+    def CalcBadlags(self, pwrthresh = 0):
+        bad_lags = lagstate.bad_lags(self, self.pwr0)
+       
+        #bad_lags = [[] for i in range(self.nrang)]
+        #        
         # get bad lags - transmit pulse overlap
-        for i in range(self.nrang):
-            bad_lags[i] = get_badlags(self.rawacf, i)
-        
-        # get bad lags - power exceeds lag zero power
-        # "Spectral width of SuperDARN echos", Ponomarenko and Waters
-        for rgate in self.ranges:
-            # .. this will only work if we have a good lag zero sample
-            # TODO: work on fall back
-            if not bad_lags[rgate][0]: 
-                offset = self.nlags * rgate
-                i_lags = np.array(self.acfi[offset:offset+self.nlags])
-                q_lags = np.array(self.acfq[offset:offset+self.nlags])
-                samples = i_lags + 1j * q_lags 
-                
-                lagpowers = abs(samples) ** 2
-                bad_lags[rgate] += (lagpowers > (lagpowers[0] * 1.3))# add interference lags
-            else:
-                # if lag zero is bad, we can't filter out lags greater than lag zero because we don't know what it is..
-                pass 
+        #for i in range(self.nrang):
+        #    bad_lags[i] = get_badlags(self.rawacf, i)
 
-        #pybadlags = lagstate(self, self.pwr0)
-        #pdb.set_trace()
+        if pwrthresh:
+            # get bad lags - power exceeds lag zero power
+            # "Spectral width of SuperDARN echos", Ponomarenko and Waters
+            for rgate in self.ranges:
+                # .. this will only work if we have a good lag zero sample
+                # TODO: work on fall back
+                if not bad_lags[rgate][0]: 
+                    offset = self.mplgs * rgate
+                    i_lags = np.array(self.acfi[offset:offset+self.mplgs])
+                    q_lags = np.array(self.acfq[offset:offset+self.mplgs])
+                    samples = i_lags + 1j * q_lags 
+                    
+                    lagpowers = abs(samples) ** 2
+
+                    bad_lags[rgate] += (lagpowers > (lagpowers[0] * 2.0))# add interference lags
+                else:
+                    # if lag zero is bad, we can't filter out lags greater than lag zero because we don't know what it is..
+                    pass 
+
         self.bad_lags = bad_lags 
 
 def PlotMixed(lomb):
@@ -590,9 +600,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args() 
     args.pulses = int(args.pulses)
-    # good time at McM is 3/20/2013, 8 AM UTC
-    #infile = '/mnt/windata/sddata/0207/all.rawacf'
-    # todo: add converging fits
+    
     if args.infile == None:
         print 'error: no --infile arguement!'
     
@@ -613,7 +621,7 @@ if __name__ == '__main__':
 
 
     # temp code for jef - plot fit in time domain
-    #RADAR = 'mcm.b'
+    #RADAR = 'mcm.a'
     #fitacfs = DMapFile(files=[args.infile.rstrip('rawacf') + 'fitacf'])
 
     for (i,t) in enumerate(times):
@@ -632,7 +640,7 @@ if __name__ == '__main__':
                     continue
             else:
                 fit.ProcessPulse(cubecache)
-                fit.FitACFCompare(fitacfs, RADAR)
+                #fit.FitACFCompare(fitacfs, RADAR)
 
         fit.WriteLSSFit(hdf5file)
 

@@ -11,6 +11,7 @@ import pdb
 
 # TimeCube is a class of cached cubes of amplitude(time, frequency, decay)
 # creating these is expensive and RAM is cheap, so...
+# TODO: create generalized timecube with given function and inputs
 
 class TimeCube:
     def __init__(self, maxsize = 20):
@@ -87,23 +88,28 @@ def make_spacecube(t, f, alfs, env_model):
     CS_f = z_matrix.T
 
     return ce_matrix, se_matrix, CS_f
+
 def make_hyperspacecube(tfreqs_hz,times_secs,fcrit_hz,Vlos_mps,alfs, env_model):
     # tfreqs_hz and times_secs are equal length.
     # fcrit_hz vlos_mps and alfs are parameters to be found.
     C_mps=299792458.
+    
+    # generate theta_matrix
+    fcritcube = np.tile(fcrit_hz, (len(Vlos_mps), len(times_secs), 1))
+    vloscube = np.tile(Vlos_mps, (len(fcrit_hz), len(times_secs),  1))
+    tseccube = np.tile(times_secs, (len(Vlos_mps), len(fcrit_hz), 1))
+    tfreqcube = np.tile(tfreqs_hz, (len(Vlos_mps), len(fcrit_hz), 1))
+
+    vloscube = np.swapaxes(vloscube, 1, 2)
+    vloscube = np.swapaxes(vloscube, 0, 1)
+    fcritcube = np.swapaxes(fcritcube, 1, 2)
+
+    ns = np.sqrt(1. -((fcritcube **2)/(tfreqcube ** 2)))
+    vm = ns * vloscube
+    theta_matrix = (2. * np.pi) * (2 * tfreqcube * vm / C_mps) * tseccube
+   
     # create ce_matrix and se_matrix..
     # sin and cos(w * t) * exp(-alf * t) cubes 
-    theta_matrix=np.zeros((len(Vlos_mps),len(fcrit_hz),len(times_secs)))
-    for v,vlos in enumerate(Vlos_mps):
-      for f,fcrit in enumerate(fcrit_hz):
-        for t,time in enumerate(times_secs):
-          tfreq=tfreqs_hz[t] 
-          ns=np.sqrt(1.-fcrit**2/tfreq**2)
-          vm=ns*vlos
-          #print "Vlos: %8.3f Fcrit: %8.3e Time %8.3e :: Tfreq: %8.3e Ns: %5.3f Vm: %8.3f" % (vlos,fcrit,time,tfreq,ns,vm)
-#JDS: need to check units, thata should be radians here:
-                             # radians/cycle * doppler_freq_shift * indexof refraction * time
-          theta_matrix[v,f,t]=(2.*np.pi)*(2.*tfreq*vm/C_mps)*time
     c_matrix = np.cos(theta_matrix)
     s_matrix = np.sin(theta_matrix)
     # C_matrix should have dims of : Vlos,fcrit, times
@@ -112,8 +118,6 @@ def make_hyperspacecube(tfreqs_hz,times_secs,fcrit_hz,Vlos_mps,alfs, env_model):
     # create cube of time by frequency with no decay
     c_cube = np.tile(c_matrix, (len(alfs),1,1,1))
     s_cube = np.tile(s_matrix, (len(alfs),1,1,1))
-    # about 80% of execution time spent here..
-    # ~ 400000
     # kernprof.py -l iterative_bayes.py
     # python -m line_profiler iterative_bayes.py.lprof
 
@@ -122,9 +126,7 @@ def make_hyperspacecube(tfreqs_hz,times_secs,fcrit_hz,Vlos_mps,alfs, env_model):
     envelope_cube = np.tile(envelope, (len(Vlos_mps),len(fcrit_hz),1,1))
 
     # rearrange cubes to match format of ce_matrix and se_matrix
-    #print "hypertimecube: envelope_cube:",envelope_cube.shape
     envelope_cube = np.swapaxes(envelope_cube, 2, 3)
-    #print "hypertimecube: envelope_cube:",envelope_cube.shape
 
     c_cube = np.swapaxes(c_cube, 0, 1)
     c_cube = np.swapaxes(c_cube, 1, 2)
@@ -132,8 +134,6 @@ def make_hyperspacecube(tfreqs_hz,times_secs,fcrit_hz,Vlos_mps,alfs, env_model):
     s_cube = np.swapaxes(s_cube, 0, 1)
     s_cube = np.swapaxes(s_cube, 1, 2)
     s_cube = np.swapaxes(s_cube, 2, 3)
-    #print "hypertimecube: c_cube:",c_cube.shape
-    #print "hypertimecube: envelope:",envelope.shape
     
     ce_matrix = c_cube * envelope_cube
     se_matrix = s_cube * envelope_cube
@@ -152,8 +152,3 @@ def make_hyperspacecube(tfreqs_hz,times_secs,fcrit_hz,Vlos_mps,alfs, env_model):
     CS_f = z_matrix.T
 
     return ce_matrix, se_matrix, CS_f
-
-# https://stackoverflow.com/questions/13031439/element-wise-function-on-pycudacomplex-array
-# need to use complex 1d array
-
-
