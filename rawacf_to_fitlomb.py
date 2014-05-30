@@ -4,7 +4,7 @@
 # mit license
 
 # TODO: move raw data to ARSC, process on their machines
-
+# TODO: look at zooming off fit snr for each iteration
 # TODO: look at residual spread of fitacf and fitlomb to samples
 # TODO: look at variance of residual, compare with fitacf
 # TODO: convert to work with davitpy
@@ -30,9 +30,9 @@ from libfitacf import get_badlags
 from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes, calc_zoomvar
 
 FITLOMB_REVISION_MAJOR = 0
-FITLOMB_REVISION_MINOR = 6
+FITLOMB_REVISION_MINOR = 8
 ORIGIN_CODE = 'rawacf_to_fitlomb.py'
-DATA_DIR = './testdata/'
+DATA_DIR = './baddata/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
 
 I_OFFSET = 0
@@ -44,7 +44,7 @@ MAX_W = 1200 # m/s, max spectral width to include in lomb
 C = 3e8
 
 CALC_SIGMA = True 
-KEEP_SAMPLES = False 
+KEEP_SAMPLES = True 
 
 ALPHA_RES = 30 # m/s
 VEL_RES = 30 # m/s
@@ -97,7 +97,7 @@ class LombFit:
         self.recordtime = datetime.datetime(self.rawacf['time.yr'], self.rawacf['time.mo'], self.rawacf['time.dy'], self.rawacf['time.hr'], self.rawacf['time.mt'], self.rawacf['time.sc'], self.rawacf['time.us']) 
         
         # calculate max decay rate for MAX_W spectral width
-        amax = (MAX_W) / (C / (self.tfreq * 1e3 * 2 * np.pi))
+        amax = (MAX_W) / (C / (self.tfreq * 1e3))
 
         # calculate max frequency either nyquist rate, or calculated off max velocity
         nyquist = 1 / (2e-6 * self.mpinc)
@@ -149,6 +149,9 @@ class LombFit:
 
         self.fit_snr_l  = np.zeros([self.nrang, self.maxfreqs])
         self.fit_snr_s  = np.zeros([self.nrang, self.maxfreqs])
+
+        self.r2_phase_l  = np.zeros([self.nrang, self.maxfreqs])
+        self.r2_phase_s  = np.zeros([self.nrang, self.maxfreqs])
 
         self.p_l        = np.zeros([self.nrang, self.maxfreqs])
         self.p_l_e      = np.zeros([self.nrang, self.maxfreqs])
@@ -220,6 +223,7 @@ class LombFit:
         add_compact_dset(hdf5file, groupname, 'v_e', np.float32(self.v_l_e), h5py.h5t.NATIVE_FLOAT)
         add_compact_dset(hdf5file, groupname, 'v_l_std', np.float32(self.v_l_std), h5py.h5t.NATIVE_FLOAT)
         add_compact_dset(hdf5file, groupname, 'fit_snr_l', np.float32(self.fit_snr_l), h5py.h5t.NATIVE_FLOAT)
+        add_compact_dset(hdf5file, groupname, 'r2_phase_l', np.float32(self.r2_phase_l), h5py.h5t.NATIVE_FLOAT)
 
         if CALC_SIGMA:
             add_compact_dset(hdf5file, groupname, 'p_s', np.float32(self.p_s), h5py.h5t.NATIVE_FLOAT)
@@ -231,7 +235,11 @@ class LombFit:
             add_compact_dset(hdf5file, groupname, 'v_s_e', np.float32(self.v_s_e), h5py.h5t.NATIVE_FLOAT)
             add_compact_dset(hdf5file, groupname, 'v_s_std', np.float32(self.v_s_std), h5py.h5t.NATIVE_FLOAT)
             add_compact_dset(hdf5file, groupname, 'fit_snr_s', np.float32(self.fit_snr_s), h5py.h5t.NATIVE_FLOAT)
-
+            add_compact_dset(hdf5file, groupname, 'r2_phase_s', np.float32(self.r2_phase_s), h5py.h5t.NATIVE_FLOAT)
+        
+        if KEEP_SAMPLES:
+            grp.create_dataset('acfi', data = self.acfi)
+            grp.create_dataset('acfq', data = self.acfq)
 
         # TODO: verify that the following vectors are not relevant for fitlomb: phi0, phi0_e, sd_l, sd_s, sd_phi
         # add fitlomb specific attributtes and datasets
@@ -440,6 +448,7 @@ class LombFit:
                 self.v_l_std[rgate,i] = ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA)
                 self.v_l_e[rgate,i] = self.v_l_std[rgate,i] / np.sqrt(N)
                 
+                self.r2_phase_l[rgate, i]  = fit['r2_phase']
                 # for information on setting surface/ionospheric scatter thresholds, see
                 # A new approach for identifying ionospheric backscatterin midlatitude SuperDARN HF radar observations
                 if abs(v_l) - (self.v_thresh - (self.v_thresh / self.w_thresh) * abs(self.w_l[rgate, i])) > 0: 
@@ -476,6 +485,7 @@ class LombFit:
                     v_s = (fit['frequency'] * C) / (2 * self.tfreq * 1e3)
                     self.v_s[rgate,i] = v_s
 
+                    self.r2_phase_s[rgate, i] = fit['r2_phase']
                     self.fit_snr_s[rgate,i] = fit['fit_snr']
                     self.v_s_std[rgate,i] = ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA)
                     self.v_s_e[rgate,i] = self.v_s_std[rgate,i] / np.sqrt(N)

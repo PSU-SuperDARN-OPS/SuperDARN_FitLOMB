@@ -173,6 +173,7 @@ def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = Fa
                  #print "    F_fhwm:",fit['frequency_fwhm'],f_delta
                  #print "    A_lims:",fit['alpha_lims']
                  #print "    A_fhwm:",fit['alpha_fwhm'],a_delta
+        fit['r2_phase'] = calc_phase_r2(fit['signal'], samples)
         samples -= fit['signal']
         fit['fit_snr'] = np.mean(abs(fit['signal']) ** 2) / np.mean(abs(samples) ** 2)
         fit["coarse_p"]=coarse_p.copy()
@@ -181,6 +182,20 @@ def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = Fa
         fit["zoom_iteration"]=zoom_iteration
         fits.append(fit)
     return fits
+
+# calculate r^2 error for phase fit
+# fitsignal - fitted complex values for signal in lagspace at good lags
+# samples - measured complex values of good lags
+def calc_phase_r2(fitsignal, samples):
+    # calculate unwrapped phase at lags
+    p_meas = np.unwrap(np.arctan2(np.imag(samples), np.real(samples)))
+    p_fit = np.unwrap(np.arctan2(np.imag(fitsignal), np.real(fitsignal)))
+
+    # using notation from http://en.wikipedia.org/wiki/Coefficient_of_determination
+    ss_tot = sum((p_meas - np.mean(p_meas)) ** 2.)
+    ss_res = sum((p_meas - p_fit)**2.)
+    r2 = 1. - (ss_res/ss_tot)
+    return r2
 
 # calculates zoomed parameters
 def calc_zoomvar(ar, center, span,scale,length):
@@ -197,7 +212,6 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     m = 2
 
     dbar2 = (sum(np.real(s) ** 2) + sum(np.imag(s) ** 2)) / (N) # (11) in [4] 
-    
     # reuse time x alphas x frequency cube if possible, this is time consuming to construct
     if cubecache:
         ce_matrix, se_matrix, CS_f = cubecache.get_spacecube(t, f, alfs, env_model) 

@@ -55,6 +55,8 @@ WMIN = -WMAX
 VMAX = 1500 # m/s
 VMIN = -VMAX
 
+def dbscale(vec):
+    return 50 * np.log10(vec)
 def prettyify():
     plt.rcParams.update({'font.size': 16})
     #plt.rcParams.update({'font.weight': 'bold'})
@@ -111,12 +113,15 @@ def createMergefile(radar, starttime, endtime, datadir):
         hdf5files = glob.glob(globname)
 
         for h5f in hdf5files:
-            f = h5py.File(h5f, 'r')
-            for pulse in f['/']:
-                dset = pulse 
-                mergefile[dset] = h5py.ExternalLink(h5f.split('/')[-1], dset)
+            try:
+                f = h5py.File(h5f, 'r')
+                for pulse in f['/']:
+                    dset = pulse 
+                    mergefile[dset] = h5py.ExternalLink(h5f.split('/')[-1], dset)
 
-            f.close()
+                f.close()
+            except:
+                print 'trouble opening ' + h5f + ', skipping..' 
         starttime = starttime + datetime.timedelta(days=1)
     mergefile.close()
 
@@ -250,8 +255,12 @@ def Plot_v(lombfit, beam, starttime, endtime, cmap = plt.cm.get_cmap("SD_V"), im
         plt.savefig(imgname, bbox_inches='tight')
         plt.clf()
 
-def plot_vector(lombfit, beam, param, flag, starttime, endtime, vmax = 1500, vmin = -1500, cmap = plt.cm.get_cmap("SD_V"), image = False):
+def plot_vector(lombfit, beam, param, flag, starttime, endtime, vmax = 1500, vmin = -1500, cmap = plt.cm.get_cmap("SD_V"), image = False, scale = None):
     times, ranges, vec = getParam(lombfit, beam, param, starttime, endtime, maskparam = flag)
+
+    if scale:
+        vec = scale(vec)
+
     PlotRTI(times, ranges, vec, cmap, [vmin, vmax])
     FormatRTI('time (UTC)', param, param, param)
     if not image:
@@ -264,45 +273,51 @@ def plot_vector(lombfit, beam, param, flag, starttime, endtime, vmax = 1500, vmi
 
 
 # recalculate qflg to experiment with different data quality thresholds
-def remask(lombfit, starttime, endtime, beams, pmin, qwmin, qvmin, wmax, wmin, vmax, vmin, median = False):
+def remask(lombfit, starttime, endtime, beams, pmin, qwmin, qvmin, wmax, wmin, vmax, vmin, median = False, snr = False):
     pulses = getPulses(lombfit, beams, starttime, endtime)
-    for (i,pul) in enumerate(pulses):
-        qmask = (pul['p_l'][...] > pmin) * \
-                (pul['v'][...] < vmax) * \
-                (pul['v'][...] > vmin) * \
-                (pul['w_l'][...] < wmax) * \
-                (pul['w_l'][...] > wmin) * \
-                (pul['w_l_e'][...] < qwmin) * \
-                (pul['v_e'][...] < qvmin)
-        
-        pul['qflg'][:,:] = qmask
-
-    if median: 
-        # apply spatial/temporal filter
+    if not snr:
         for (i,pul) in enumerate(pulses):
-            # spatial filter
-            qmask = pul['qflg'][:,:]
-            sqmask = (qmask * np.append(qmask[1:],[[0,0]], axis=0)) + \
-                     (qmask * np.append([[0,0]],qmask[1:], axis=0))
-
-            # temporal filter
-            tmask = np.zeros(qmask.shape)
-            if i > 0:
-                tmask += qmask * pulses[i-1]['qflg'][:,:]
-            if i < len(pulses) -1:
-                tmask += qmask * pulses[i+1]['qflg'][:,:]
-
-            qmask = (sqmask * tmask) > 0
+            qmask = (pul['p_l'][...] > pmin) * \
+                    (pul['v'][...] < vmax) * \
+                    (pul['v'][...] > vmin) * \
+                    (pul['w_l'][...] < wmax) * \
+                    (pul['w_l'][...] > wmin) * \
+                    (pul['w_l_e'][...] < qwmin) * \
+                    (pul['v_e'][...] < qvmin)
+            
             pul['qflg'][:,:] = qmask
+
+        if median: 
+            # apply spatial/temporal filter
+            for (i,pul) in enumerate(pulses):
+                # spatial filter
+                qmask = pul['qflg'][:,:]
+                sqmask = (qmask * np.append(qmask[1:],[[0,0]], axis=0)) + \
+                         (qmask * np.append([[0,0]],qmask[1:], axis=0))
+
+                # temporal filter
+                tmask = np.zeros(qmask.shape)
+                if i > 0:
+                    tmask += qmask * pulses[i-1]['qflg'][:,:]
+                if i < len(pulses) -1:
+                    tmask += qmask * pulses[i+1]['qflg'][:,:]
+
+                qmask = (sqmask * tmask) > 0
+                pul['qflg'][:,:] = qmask
+    else:
+        for (i,pul) in enumerate(pulses):
+                    qmask = (50 * np.log10(pul['fit_snr_l'][...]) > .05 )
+                    pul['qflg'][:,:] = qmask
+
 
 
 def PlotTime(radar, starttime, endtime, directory, beams):
     mergefile = createMergefile(RADAR, starttime, endtime, DATADIR)
     lombfit = h5py.File(mergefile, 'r+')
     
-    #remask(lombfit, starttime, endtime, beams, PMIN, QWMIN, QVMIN, WMAX, WMIN, VMAX, VMIN, median = True)
+    remask(lombfit, starttime, endtime, beams, PMIN, QWMIN, QVMIN, WMAX, WMIN, VMAX, VMIN, median = False, snr = True)
 
-    plot_vector(lombfit, beams, 'fit_snr' , '', starttime, endtime, vmax = 300, vmin = 0, cmap = POWER_CMAP, image=True)
+    plot_vector(lombfit, beams, 'fit_snr_l' , '', starttime, endtime, vmax = 100, vmin = 0, cmap = POWER_CMAP, image=True, scale = dbscale)
     PlotFreq(lombfit, beams, starttime, endtime, image = True)
     Plot_p_l(lombfit, beams, starttime, endtime, image = True)
     Plot_w_l(lombfit, beams, starttime, endtime, image = True)
@@ -316,7 +331,7 @@ def PlotTime(radar, starttime, endtime, directory, beams):
 if __name__ == '__main__':
     prettyify() # set matplotlib parameters for larger text
 
-    plot_times = {datetime.datetime(2013,9,6,0,00) : datetime.datetime(2013,9,6,23,59)}
+    plot_times = {datetime.datetime(2013,3,20,0,00) : datetime.datetime(2013,3,20,23,59)}
 
     
     # set of times to plot, start:stop
