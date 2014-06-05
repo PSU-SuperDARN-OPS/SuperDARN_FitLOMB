@@ -49,11 +49,9 @@ KEEP_SAMPLES = True
 ALPHA_RES = 30 # m/s
 VEL_RES = 30 # m/s
 
-VEL_CMAP = plt.cm.RdBu
-FREQ_CMAP = plt.cm.spectral
-NOISE_CMAP = plt.cm.autumn
-SPECW_CMAP = plt.cm.hot
-POWER_CMAP = plt.cm.jet
+# minimum number of steps for bayes 
+MIN_ALFSTEPS = 10
+MIN_FREQSTEPS = 10
 
 BEAM_ATTRS = ['radar.revision.major', 'radar.revision.minor',\
         'origin.command', 'cp', 'stid', \
@@ -103,13 +101,13 @@ class LombFit:
         nyquist = 1 / (2e-6 * self.mpinc)
         fmax = min((MAX_V * 2 * (self.tfreq * 1e3)) / C, nyquist)
         df = (VEL_RES * 2.) * (self.tfreq * 1e3) / C
-        self.freqs = np.linspace(-fmax,fmax, 2. * fmax / df)
+        self.freqs = np.linspace(-fmax,fmax, max(2. * fmax / df, MIN_FREQSTEPS))
         
         self.maxalf = amax
-        self.alfsteps = int(amax / ALPHA_RES)
+        self.alfsteps = max(int(MAX_W / ALPHA_RES), MIN_ALFSTEPS)
         self.maxfreqs = 2
         self.alfs = np.linspace(0, self.maxalf, self.alfsteps)
-
+         
         # thresholds on velocity and spectral width for surface scatter flag (m/s)
         self.v_thresh = 30.
         self.w_thresh = 90. # blanchard, 2009
@@ -406,7 +404,7 @@ class LombFit:
                 ot, osamples = op._CalcSamples(rgate)
                 t = np.concatenate([t, ot])
                 samples = np.concatenate([samples, osamples])
-
+        
         # calcuate generalized lomb-scargle periodogram iteratively
         if env_model == 1:
             self.lfits[rgate] = iterative_bayes(samples, t, self.freqs, self.alfs, env_model, self.maxfreqs, cubecache = cubecache)

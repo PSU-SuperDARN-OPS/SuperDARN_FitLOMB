@@ -13,7 +13,7 @@ from pytz import timezone
 
 BEAMS = 16
 MAX_LOMBDEPTH = 2
-DATADIR = './testdata/'
+DATADIR = './baddata/'
 PLOTDIR = './plots/'
 VEL_CMAP = plt.cm.RdBu
 FREQ_CMAP = plt.cm.spectral
@@ -27,8 +27,7 @@ ALLBEAMS = [str(b) for b in range(BEAMS)]
 MINRANGE = 0 
 MAXRANGE = 3000
 TIMEINT = 120
-RADAR = 'kod.c'
-BEAMS = [9]#ALLBEAMS# [9]
+BEAMS = [7]#ALLBEAMS# [9]
 cdict3 = {'red':  ((0.0, 0.0, 0.0),
                    (0.25, 1.0, 1.0),
                    (0.5, 1.0, 0.0),
@@ -326,12 +325,13 @@ def PlotTime(radar, starttime, endtime, directory, beams):
 
     plot_vector(lombfit, beams, 'v_e' , '', starttime, endtime, vmax = 300, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
     plot_vector(lombfit, beams, 'w_l_e' , '', starttime, endtime, vmax = 300, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
+    plot_vector(lombfit, beams, 'r2_phase_l' , '', starttime, endtime, vmax = 1, vmin = -1, cmap = plt.cm.get_cmap("SD_V"), image=True)
     lombfit.close()
 
 if __name__ == '__main__':
     prettyify() # set matplotlib parameters for larger text
 
-    plot_times = {datetime.datetime(2013,3,20,0,00) : datetime.datetime(2013,3,20,23,59)}
+    plot_times = {datetime.datetime(2013,9,06,0,00) : datetime.datetime(2014,9,06,00,20)}
 
     
     # set of times to plot, start:stop
@@ -368,7 +368,7 @@ if __name__ == '__main__':
     '''
     plot_zoomtimes = {}
     TIMEINT = 120 #
-    RADARS = ['mcm.a', 'mcm.b']#['mcm.a','adw.a', 'ade.a', 'kod.d', 'ksr.a']
+    RADARS = ['mcm.a']
     for radar in RADARS:
         for stime in plot_times.keys():
             print 'plotting '  + str(stime)

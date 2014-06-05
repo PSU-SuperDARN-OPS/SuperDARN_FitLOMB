@@ -8,7 +8,6 @@ import time
 import_start=time.clock()
 import numpy as np
 import numexpr as ne
-import pdb
 from timecube import TimeCube, make_spacecube
 
 import_elapsed=time.clock()-import_start
@@ -247,7 +246,6 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     # see "Nonuniform Sampling: Bandwidth and Aliasing"
     # for <sigma**2>
     # sigma2 = (N * dbar2 - hbar2) / (N - 4.) # ???
-
     maxidx = np.argmax(P_f)
     max_tuple = np.unravel_index(maxidx, P_f.shape)
     alf_slice = P_f[:,max_tuple[1]]
@@ -256,7 +254,7 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     alf_fwhm, a_fwhm_bounded = find_fwhm(alf_slice, max_tuple[0])
     freq_fwhm, f_fwhm_bounded = find_fwhm(freq_slice, max_tuple[1])
     # TODO: add comparison of input samples to std deviation of input samples 
-
+   
     fit = {}
     fit['amplitude'] = (R_f[max_tuple] + I_f[max_tuple]) / CS_f[max_tuple] 
     fit['amplitude_error_unscaled'] = CS_f[max_tuple]
