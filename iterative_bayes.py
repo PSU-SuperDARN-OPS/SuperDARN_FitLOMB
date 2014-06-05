@@ -80,7 +80,9 @@ def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = Fa
         timecube = (make_spacecube(t, freqs, alfs, env_model))
     else:
         timecube = False
-    
+    print freqs
+    print alfs
+    print t
     for i in range(maxfreqs):
         # calculate initial fit
         fit = calculate_bayes(samples, t, freqs, alfs, env_model, cubecache = cubecache, timecube = timecube)
@@ -206,6 +208,7 @@ def calc_zoomvar(ar, center, span,scale,length):
 # to profile:
 # kernprof.py -l foo.py
 # python -m line_profiler foo.py.lprof
+#@profile
 def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = False):
     N = len(t) * 2.# see equation (10) in [4]
     m = 2
@@ -280,7 +283,7 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
 
 if __name__ == '__main__':
     print "Initial module import time: %f [sec]" % (time.clock()-import_start)
-    plot=True
+    plot=False
     if plot: 
       pyplot_start=time.clock()
       import matplotlib.pyplot as plt

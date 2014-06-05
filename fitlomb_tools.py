@@ -27,7 +27,7 @@ ALLBEAMS = [str(b) for b in range(BEAMS)]
 MINRANGE = 0 
 MAXRANGE = 3000
 TIMEINT = 120
-BEAMS = [7]#ALLBEAMS# [9]
+BEAMS = [6, 7,8,9,10]#ALLBEAMS# [9]
 cdict3 = {'red':  ((0.0, 0.0, 0.0),
                    (0.25, 1.0, 1.0),
                    (0.5, 1.0, 0.0),
@@ -143,7 +143,7 @@ def PlotFreq(lombfit, beams, starttime, endtime, image = False):
     if not image:
         plt.show()
     else:
-        imgname = get_imagename(t[0], t[-1], RADAR, 'freq')
+        imgname = get_imagename(t[0], t[-1], RADAR, 'freq', beam)
         plt.savefig(imgname, bbox_inches='tight')
         plt.clf()
 
@@ -202,29 +202,29 @@ def PlotRTI(times, ranges, z, cmap, lim):
 
         plt.tight_layout()
 
-def FormatRTI(xlabel, ylabel, title, cbarlabel):
+def FormatRTI(xlabel, ylabel, title, cbarlabel, beam):
     cb = plt.colorbar()
 
     #cb.ax.yaxis.set_ylabel_position('right')
     cb.ax.set_ylabel(cbarlabel, rotation='vertical')
     plt.ylabel(ylabel)
     plt.xlabel(xlabel)
-    plt.title(title + ', ' + RADAR)
+    plt.title(title + ', ' + RADAR + ', ' + 'beam: ' + str(beam))
 
 # file name
 # 2014.18.20.20.to.2014.18.20.50.p_l.kod.d.png
-def get_imagename(tstart, tstop, radar, param):
-    return PLOTDIR + tstart.strftime('%Y.%m.%d.%H%M') + '.to.' + tstop.strftime('%Y.%m.%d.%H%M') + '.' + param + '.' + radar + '.png'
+def get_imagename(tstart, tstop, radar, param, beam):
+    return PLOTDIR + tstart.strftime('%Y.%m.%d.%H%M') + '.to.' + tstop.strftime('%Y.%m.%d.%H%M') + '.' + param + '.' + radar + '_beam' + str(beam) + '.png'
 
 # parameter specific plotting functions 
 def Plot_p_l(lombfit, beam, starttime, endtime, cmap = POWER_CMAP, image = False):
     times, ranges, powers = getParam(lombfit, beam, 'p_l', starttime, endtime, maskparam = 'qflg', blank = 0)
     PlotRTI(times, ranges, powers, cmap, [0, 50])
-    FormatRTI('time (UTC)', 'slant range (km)', 'p_l (dB)', 'p_l (dB)')
+    FormatRTI('time (UTC)', 'slant range (km)', 'p_l (dB)', 'p_l (dB)', beam)
     if not image:
         plt.show()
     else:
-        imgname = get_imagename(times[0], times[-1], RADAR, 'p_l')
+        imgname = get_imagename(times[0], times[-1], RADAR, 'p_l', beam)
         print imgname
         plt.savefig(imgname, bbox_inches='tight')
         plt.clf()
@@ -232,11 +232,11 @@ def Plot_p_l(lombfit, beam, starttime, endtime, cmap = POWER_CMAP, image = False
 def Plot_w_l(lombfit, beam, starttime, endtime, cmap = FREQ_CMAP, image = False):
     times, ranges, powers = getParam(lombfit, beam, 'w_l', starttime, endtime, maskparam = 'qflg')
     PlotRTI(times, ranges, powers, cmap, [0, 500])
-    FormatRTI('time (UTC)', 'slant range (km)', 'w_l (m/s)', 'w_l (m/s)')
+    FormatRTI('time (UTC)', 'slant range (km)', 'w_l (m/s)', 'w_l (m/s)', beam)
     if not image:
         plt.show()
     else:
-        imgname = get_imagename(times[0], times[-1], RADAR, 'w_l')
+        imgname = get_imagename(times[0], times[-1], RADAR, 'w_l', beam)
         print imgname
         plt.savefig(imgname, bbox_inches='tight')
         plt.clf()
@@ -245,11 +245,11 @@ def Plot_w_l(lombfit, beam, starttime, endtime, cmap = FREQ_CMAP, image = False)
 def Plot_v(lombfit, beam, starttime, endtime, cmap = plt.cm.get_cmap("SD_V"), image = False):
     times, ranges, vels = getParam(lombfit, beam, 'v', starttime, endtime, maskparam  ='qflg')
     PlotRTI(times, ranges, vels, cmap, [-1000, 1000])
-    FormatRTI('time (UTC)', 'slant range (km)', 'v (m/s)', 'v (m/s)')
+    FormatRTI('time (UTC)', 'slant range (km)', 'v (m/s)', 'v (m/s)', beam)
     if not image:
         plt.show()
     else:
-        imgname = get_imagename(times[0], times[-1], RADAR, 'v')
+        imgname = get_imagename(times[0], times[-1], RADAR, 'v', beam)
         print imgname
         plt.savefig(imgname, bbox_inches='tight')
         plt.clf()
@@ -261,11 +261,11 @@ def plot_vector(lombfit, beam, param, flag, starttime, endtime, vmax = 1500, vmi
         vec = scale(vec)
 
     PlotRTI(times, ranges, vec, cmap, [vmin, vmax])
-    FormatRTI('time (UTC)', param, param, param)
+    FormatRTI('time (UTC)', param, param, param, beam)
     if not image:
         plt.show()
     else:
-        imgname = get_imagename(times[0], times[-1], RADAR, param)
+        imgname = get_imagename(times[0], times[-1], RADAR, param, beam)
         print imgname
         plt.savefig(imgname, bbox_inches='tight')
         plt.clf()
@@ -314,7 +314,7 @@ def PlotTime(radar, starttime, endtime, directory, beams):
     mergefile = createMergefile(RADAR, starttime, endtime, DATADIR)
     lombfit = h5py.File(mergefile, 'r+')
     
-    remask(lombfit, starttime, endtime, beams, PMIN, QWMIN, QVMIN, WMAX, WMIN, VMAX, VMIN, median = False, snr = True)
+    remask(lombfit, starttime, endtime, beams, PMIN, QWMIN, QVMIN, WMAX, WMIN, VMAX, VMIN, median = True, snr = False)
 
     plot_vector(lombfit, beams, 'fit_snr_l' , '', starttime, endtime, vmax = 100, vmin = 0, cmap = POWER_CMAP, image=True, scale = dbscale)
     PlotFreq(lombfit, beams, starttime, endtime, image = True)
@@ -324,14 +324,14 @@ def PlotTime(radar, starttime, endtime, directory, beams):
 
 
     plot_vector(lombfit, beams, 'v_e' , '', starttime, endtime, vmax = 300, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
-    plot_vector(lombfit, beams, 'w_l_e' , '', starttime, endtime, vmax = 300, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
+    plot_vector(lombfit, beams, 'w_l_e' , '', starttime, endtime, vmax = 100, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
     plot_vector(lombfit, beams, 'r2_phase_l' , '', starttime, endtime, vmax = 1, vmin = -1, cmap = plt.cm.get_cmap("SD_V"), image=True)
     lombfit.close()
 
 if __name__ == '__main__':
     prettyify() # set matplotlib parameters for larger text
 
-    plot_times = {datetime.datetime(2013,9,06,0,00) : datetime.datetime(2014,9,06,00,20)}
+    plot_times = {datetime.datetime(2014,6,04,3,05) : datetime.datetime(2014,6,04,04,00)}
 
     
     # set of times to plot, start:stop
@@ -367,23 +367,24 @@ if __name__ == '__main__':
     }
     '''
     plot_zoomtimes = {}
-    TIMEINT = 120 #
-    RADARS = ['mcm.a']
+    TIMEINT = 10 #
+    RADARS = ['kod.d']
     for radar in RADARS:
         for stime in plot_times.keys():
-            print 'plotting '  + str(stime)
-            #try:
-                #RADAR = 'kod.c'
-                #PlotTime(RADAR, stime, plot_times[stime], DATADIR, ['9'])
+            for beam in BEAMS:
+                print 'plotting '  + str(stime)
+                #try:
+                    #RADAR = 'kod.c'
+                    #PlotTime(RADAR, stime, plot_times[stime], DATADIR, ['9'])
 
-            RADAR = radar
-            PlotTime(RADAR, stime, plot_times[stime], DATADIR, BEAMS) 
+                RADAR = radar
+                PlotTime(RADAR, stime, plot_times[stime], DATADIR, [beam]) 
 
-            #except:
-            #    plt.clf()
-            #    pass
-            #RADAR = 'kod.d'
-            #PlotTime(RADAR, stime, plot_times[stime], DATADIR, ALLBEAMS)
+                #except:
+                #    plt.clf()
+                #    pass
+                #RADAR = 'kod.d'
+                #PlotTime(RADAR, stime, plot_times[stime], DATADIR, ALLBEAMS)
 
     TIMEINT = 1
     MINRANGE = 0 

@@ -12,6 +12,9 @@ import pdb
 # TimeCube is a class of cached cubes of amplitude(time, frequency, decay)
 # creating these is expensive and RAM is cheap, so...
 # TODO: create generalized timecube with given function and inputs
+# TODO: create fine resolution timecube, then provide masked timecubes..
+# input: t, f, alfs, env_model
+
 
 class TimeCube:
     def __init__(self, maxsize = 20):
