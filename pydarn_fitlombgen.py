@@ -242,6 +242,7 @@ class LombFit:
 
 
     # do comparison plots of the lomb fit and fitacf in lagspace
+    # todo: source data with pydarn sdio..
     def FitACFCompare(self, fitacfs, radar, plot_lagspace = True):
         # look at residual spread of fitacf and fitlomb to samples
         # look at variance of residual, compare with 
@@ -324,35 +325,6 @@ class LombFit:
                 imgname = 'lagplots/' + radar + '_' + str(s) + '_' + str(calendar.timegm(self.recordtime.timetuple()) + int(self.rawacf['time.us'])/1e6) + '.png'
                 plt.savefig(imgname, bbox_inches='tight')
                 plt.clf()
-
-
-    def ParallelProcessPulse(self, cubecache = False, pulses = 1):
-        # create pp job server
-        job_server = pp.Server()#ppservers=("137.229.27.61",""))
-        
-        # prepare sample and time arrays 
-        times_samples = [(self._CalcSamples(r)) for r in self.ranges]
-        self.nlag[:] = [len(samps[0]) for samps in times_samples]
-        
-        jobs = []
-        
-        # dispatch jobs
-        libs = ("numpy as np", "numexpr as ne", "timecube", "iterative_bayes")
-        funcs = (make_spacecube, TimeCube, find_fwhm, calculate_bayes, calc_zoomvar)
-
-        for r in self.ranges:
-            args = (times_samples[r][1], times_samples[r][0], self.freqs, self.alfs, 1, self.maxfreqs, cubecache)
-            jobs.append(job_server.submit(iterative_bayes, args, funcs, libs))
-        
-        # wait for jobs to complete
-        job_server.wait() 
-        
-        for (rgate, job) in enumerate(jobs):
-            self.lfits[rgate] = job()
-
-        job_server.destroy() 
-
-        self.ProcessPeaks()
 
     # get time and good complex samples for a range gate
     def _CalcSamples(self, rgate):
@@ -568,25 +540,26 @@ def add_compact_dset(hdf5file, group, dsetname, data, dtype, mask = []):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
-    parser.add_argument("--verbose", help="increase output verbosity", action="store_true")
     parser.add_argument("--infile", help="input RawACF file to convert")
     parser.add_argument("--outfile", help="output FitLSS file")
     parser.add_argument("--starttime", help="input RawACF file to convert")
     parser.add_argument("--endtime", help="input RawACF file to convert")
-    parser.add_argument("--parallel", help="use pp to parallelize pulse fitting", action="store_true", default=0) 
     parser.add_argument("--pulses", help="calculate lomb over multiple pulses", default=1) 
+    parser.add_argument("--radar", help="radar to create data from", default='mcm.a') 
 
     args = parser.parse_args() 
     args.pulses = int(args.pulses)
    
     sTime=datetime.datetime(2013,9,6)
     eTime=datetime.datetime(2013,9,7,0,0)
-    rad = 'mcm.a'
+
+    # boilerplate..
     fileType='rawacf'
     filtered=False
     src='local'
     channel=None
-    myPtr = sdio.radDataOpen(sTime,rad,eTime=eTime,channel=channel,bmnum=None,cp=None,fileType=fileType,filtered=filtered, src=src)
+
+    myPtr = sdio.radDataOpen(sTime,args.rad,eTime=eTime,channel=channel,bmnum=None,cp=None,fileType=fileType,filtered=filtered, src=src)
 
     if not args.outfile:
         outfilename  = 'testoutput.fitlomb.hdf5'
@@ -604,19 +577,17 @@ if __name__ == '__main__':
     while True:
         fit = LombFit(sdio.radDataReadRec(myPtr))
         print fit.recordtime
-        if args.parallel:
-            fit.ParallelProcessPulse()
-        else:
-            # alternately, use non-parallelized version (easier to debug/optimize)
-            if args.pulses > 1: 
-                if i % args.pulses == 0:
-                    nextpulses = [LombFit(dfile[times[i+p]]) for p in range(1,args.pulses)]
-                    fit.ProcessMultiPulse(cubecache, nextpulses)
-                else:
-                    continue
+
+        # alternately, use non-parallelized version (easier to debug/optimize)
+        if args.pulses > 1: 
+            if i % args.pulses == 0:
+                nextpulses = [LombFit(dfile[times[i+p]]) for p in range(1,args.pulses)]
+                fit.ProcessMultiPulse(cubecache, nextpulses)
             else:
-                fit.ProcessPulse(cubecache)
-                #fit.FitACFCompare(fitacfs, RADAR)
+                continue
+        else:
+            fit.ProcessPulse(cubecache)
+            #fit.FitACFCompare(fitacfs, RADAR)
 
         fit.WriteLSSFit(hdf5file)
 
