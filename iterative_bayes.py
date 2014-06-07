@@ -80,9 +80,6 @@ def iterative_bayes(samples, t, freqs, alfs, env_model, maxfreqs, cubecache = Fa
         timecube = (make_spacecube(t, freqs, alfs, env_model))
     else:
         timecube = False
-    print freqs
-    print alfs
-    print t
     for i in range(maxfreqs):
         # calculate initial fit
         fit = calculate_bayes(samples, t, freqs, alfs, env_model, cubecache = cubecache, timecube = timecube)
