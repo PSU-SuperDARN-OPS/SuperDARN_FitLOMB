@@ -9,6 +9,8 @@
 # TODO: look at variance of residual, compare with fitacf
 # TODO: convert to work with davitpy
 # TODO: add generalized timecube generation
+# TODO: generate slist
+# TODO: generate pwr0
 
 import argparse
 
@@ -44,14 +46,7 @@ MAX_W = 1200 # m/s, max spectral width to include in lomb
 C = 3e8
 
 CALC_SIGMA = True 
-KEEP_SAMPLES = True 
-
-ALPHA_RES = 30 # m/s
-VEL_RES = 30 # m/s
-
-# minimum number of steps for bayes 
-MIN_ALFSTEPS = 10
-MIN_FREQSTEPS = 10
+KEEP_SAMPLES = False 
 
 BEAM_ATTRS = ['radar.revision.major', 'radar.revision.minor',\
         'origin.command', 'cp', 'stid', \
@@ -98,15 +93,19 @@ class LombFit:
         amax = (MAX_W) / (C / (self.tfreq * 1e3))
 
         # calculate max frequency either nyquist rate, or calculated off max velocity
+        # stepping of alpha on first pass is limited to even integers
+        # stepping of frequency on first pass is limited to even integers 
         nyquist = 1 / (2e-6 * self.mpinc)
-        fmax = min((MAX_V * 2 * (self.tfreq * 1e3)) / C, nyquist)
-        df = (VEL_RES * 2.) * (self.tfreq * 1e3) / C
+        fmax = np.ceil(min((MAX_V * 2 * (self.tfreq * 1e3)) / C, nyquist))
+        df = 2 #(VEL_RES * 2.) * (self.tfreq * 1e3) / C
+        fmax += fmax % df
+
         self.freqs = np.linspace(-fmax,fmax, max(2. * fmax / df, MIN_FREQSTEPS))
         
         self.maxalf = amax
-        self.alfsteps = max(int(MAX_W / ALPHA_RES), MIN_ALFSTEPS)
+        da = 1
         self.maxfreqs = 2
-        self.alfs = np.linspace(0, self.maxalf, self.alfsteps)
+        self.alfs = np.arange(0, self.maxalf, self.alfsteps)
          
         # thresholds on velocity and spectral width for surface scatter flag (m/s)
         self.v_thresh = 30.
@@ -117,9 +116,6 @@ class LombFit:
         self.qvle_thresh = 90
         self.qpwr_thresh = 2
         
-        # threshold (snr) to keep data
-        self.pwr_keepthresh = 2
-
         # thresholds on velocity and spectral width for ionospheric scatter flag (m/s)
         self.wimin_thresh = 100
         self.wimax_thresh = MAX_W - 100
@@ -140,7 +136,6 @@ class LombFit:
         self.v_s_e      = np.zeros([self.nrang, self.maxfreqs])
         self.v_s_std    = np.zeros([self.nrang, self.maxfreqs])
 
-        self.sd_l       = np.zeros([self.nrang, self.maxfreqs])
         self.w_l_e      = np.zeros([self.nrang, self.maxfreqs])
         self.w_l_std    = np.zeros([self.nrang, self.maxfreqs])
         self.w_l        = np.zeros([self.nrang, self.maxfreqs])
@@ -161,8 +156,6 @@ class LombFit:
         self.iflg       = np.zeros([self.nrang, self.maxfreqs])
         self.qflg       = np.zeros([self.nrang, self.maxfreqs])
 
-        self.keep       = np.zeros([self.nrang, self.maxfreqs])
-       
         self.nlag       = np.zeros([self.nrang])
         
         self.CalcBadlags()
@@ -171,14 +164,13 @@ class LombFit:
     # appends a record of the lss fit to an hdf5 file
     def WriteLSSFit(self, hdf5file):
         # create a group for /[beam number]/[record time]
-        groupname = str(self.recordtime) #str(self.bmnum) + '/' + str(self.recordtime) # changed by request of bill bristow
+        groupname = str(self.recordtime)
         grp = hdf5file.create_group(groupname)
                
         # add scalars as attributes to group
         for (i,attr) in enumerate(GROUP_ATTRS):
             grp.attrs[attr] = GROUP_ATTR_TYPES[i](self.rawacf[attr])
         
-        #beamgrp = hdf5file[str(self.bmnum)]
         grp.attrs['readme'] = FITLOMB_README
         grp.attrs['fitlomb.revision.major'] = np.int16(FITLOMB_REVISION_MAJOR)
         grp.attrs['fitlomb.revision.minor'] = np.int16(FITLOMB_REVISION_MINOR)
@@ -192,11 +184,7 @@ class LombFit:
             grp.attrs[gattr] = self.rawacf[gattr]
         
         grp.attrs['epoch.time'] = calendar.timegm(self.recordtime.timetuple()) + int(self.rawacf['time.us'])/1e6
-        # TODO: SET THE FOLLOWING
-        #grp.attrs['noise.sky'] = 0 # sky noise? 
         grp.attrs['noise.lag0'] = np.float32(self.noise) # lag zero power from noise acf?
-        #grp.attrs['noise.vel'] = 0 # velocity from fitting noise acf?
-        #grp.attrs['thr'] = 0 # wtf is this?
         
         # copy over vectors from rawacf
         add_compact_dset(hdf5file, groupname, 'ptab', np.int16(self.rawacf['ptab']), h5py.h5t.STD_I16BE)
@@ -210,7 +198,7 @@ class LombFit:
         add_compact_dset(hdf5file, groupname, 'iflg', np.int8(self.iflg), h5py.h5t.STD_I8BE)
         add_compact_dset(hdf5file, groupname, 'nlag', np.int16(self.nlag), h5py.h5t.STD_I16BE)
         
-        #add_compact_dset(hdf5file, groupname, 'keep_key', np.int16(self.keep), h5py.h5t.STD_I8BE)
+        add_compact_dset(hdf5file, groupname, 'keep_key', np.int16(self.keep), h5py.h5t.STD_I8BE)
 
         add_compact_dset(hdf5file, groupname, 'p_l', np.float32(self.p_l), h5py.h5t.NATIVE_FLOAT)
         add_compact_dset(hdf5file, groupname, 'p_l_e', np.float32(self.p_l_e), h5py.h5t.NATIVE_FLOAT)
@@ -238,10 +226,6 @@ class LombFit:
         if KEEP_SAMPLES:
             grp.create_dataset('acfi', data = self.acfi)
             grp.create_dataset('acfq', data = self.acfq)
-
-        # TODO: verify that the following vectors are not relevant for fitlomb: phi0, phi0_e, sd_l, sd_s, sd_phi
-        # add fitlomb specific attributtes and datasets
-    
 
     # calculates FitACF-like parameters for each peak in the spectrum
     # processes the pulse (move it __init__)?
@@ -303,8 +287,8 @@ class LombFit:
             except:
                 pdb.set_trace()
             f = (fitacf['v'][i] * 2 * self.tfreq * 1e3) / C
-            alf = fitacf['w_l'][i] # * ??? should be following line
-            #alf = (fitacf['w_l'][i] * 2 * np.pi * fitlomb.tfreq * 1e3 * fitlomb.t_pulse * 1e-6) / C 
+
+            alf = (fitacf['w_l'][i] * 2 * np.pi * fitlomb.tfreq * 1e3 * fitlomb.t_pulse * 1e-6) / C 
             facf = amp * np.exp(1j * 2 * np.pi * f * t) * np.exp(-alf * t)
             print 'gate : ' + str(s)
             print 'fitacf alpha: ' + str(alf)
@@ -413,13 +397,11 @@ class LombFit:
 
     def ProcessPeaks(self):
         # compute velocity, width, and power for each peak with "sigma" and "lambda" fits
-        # TODO: add exception checking to handle fit failures
         for rgate in self.ranges:
             for (i, fit) in enumerate(self.lfits[rgate]):
                 N = 2 * len(fit['t'])  
 
                 # calculate "lambda" parameters
-                np.append(self.sd_l[rgate],0) # TODO: what is a reasonable value for this? 
                 # see Effects of mixed scatter on SuperDARN convection maps near (1) for spectral width 
                 # see ros.3.6/codebase/superdarn/src.lib/tk/fitacf/src/fit_acf.c and do_fit.c
                 self.w_l[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.tfreq * 1e3)) 
@@ -464,9 +446,6 @@ class LombFit:
                         self.v_l[rgate, i] > -self.vimax_thresh:
                     self.qflg[rgate,i] = 1
                 
-                if self.p_l[rgate,i] > self.pwr_keepthresh:
-                    self.keep[rgate, i] = 1
-
             if CALC_SIGMA:
                 for (i, fit) in enumerate(self.sfits[rgate]):
                     # calculate "sigma" parameters
