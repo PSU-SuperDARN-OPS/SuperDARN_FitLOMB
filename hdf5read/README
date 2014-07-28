@@ -1,0 +1,1 @@
+This is a C API for accessing HDF5 files, attempting to mimic the api of fitread.c

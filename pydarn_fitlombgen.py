@@ -549,9 +549,11 @@ if __name__ == '__main__':
 
     args = parser.parse_args() 
     args.pulses = int(args.pulses)
-   
-    sTime=datetime.datetime(2013,9,6)
-    eTime=datetime.datetime(2013,9,7,0,0)
+
+    # ksr, kod, pgr, ade, cvw 
+    radar_codes = ['ksr.a', 'kod.c', 'kod.d', 'ade.a', 'cve', 'pgr']
+    stimes = [datetime.datetime(2014,2,26), datetime.datetime(2014,2,27), datetime.datetime(2014,3,1), datetime.datetime(2014,3,2), datetime.datetime(2014,3,4), datetime.datetime(2014,3,6)]
+    etimes = [datetime.datetime(2014,2,27), datetime.datetime(2014,2,28), datetime.datetime(2014,3,2), datetime.datetime(2014,3,3), datetime.datetime(2014,3,5), datetime.datetime(2014,3,7)]
 
     # boilerplate..
     fileType='rawacf'
@@ -559,39 +561,21 @@ if __name__ == '__main__':
     src='local'
     channel=None
 
-    myPtr = sdio.radDataOpen(sTime,args.rad,eTime=eTime,channel=channel,bmnum=None,cp=None,fileType=fileType,filtered=filtered, src=src)
+    for radar_code in radar_codes:
+        for (i, stime) in enumerate(stimes):
+            myPtr = sdio.radDataOpen(stime,radar_code,eTime=etimes[i],channel=None,bmnum=None,cp=None,fileType=fileType,filtered=filtered, src=src)
+            outfilename = stime.strftime('%Y%m%d.' + radar_code + '.hdf5') 
 
-    if not args.outfile:
-        outfilename  = 'testoutput.fitlomb.hdf5'
+            cubecache = TimeCube()
+            print DATA_DIR + outfilename
 
-    else:
-        outfilename = args.outfile
+            hdf5file = h5py.File(DATA_DIR + outfilename, 'w')
 
-    cubecache = TimeCube()
-    print DATA_DIR + outfilename
+            lombfits = []
+             
+            while True:
+                fit = LombFit(sdio.radDataReadRec(myPtr))
+                fit.ProcessPulse(cubecache)
+                fit.WriteLSSFit(hdf5file)
 
-    hdf5file = h5py.File(DATA_DIR + outfilename, 'w')
-
-    lombfits = []
-     
-    while True:
-        fit = LombFit(sdio.radDataReadRec(myPtr))
-        print fit.recordtime
-
-        # alternately, use non-parallelized version (easier to debug/optimize)
-        if args.pulses > 1: 
-            if i % args.pulses == 0:
-                nextpulses = [LombFit(dfile[times[i+p]]) for p in range(1,args.pulses)]
-                fit.ProcessMultiPulse(cubecache, nextpulses)
-            else:
-                continue
-        else:
-            fit.ProcessPulse(cubecache)
-            #fit.FitACFCompare(fitacfs, RADAR)
-
-        fit.WriteLSSFit(hdf5file)
-
-    hdf5file.close() 
-    
-    del dfile
-    
+            hdf5file.close() 
