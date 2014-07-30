@@ -45,7 +45,7 @@ herr_t LombFitReadAttr(struct LombFile *lombfile, char *groupname, char *attrnam
 {
     hid_t attr, attrtype;
     herr_t status;
-    // TODO: second arguement is wrong..
+    
     attr = H5Aopen_by_name(lombfile->file_id, groupname, attrname, H5P_DEFAULT, H5P_DEFAULT);
     attrtype = H5Aget_type(attr);
 
@@ -70,12 +70,12 @@ int LombFitRead(struct LombFile *lombfile)//struct RadarParm *prm, struct FitDat
     recordgroup = H5Gopen(lombfile->file_id, groupname, H5P_DEFAULT);
 
         
-    uint64_t *t;
-    *t = 12;
-    LombFitReadAttr(lombfile, groupname, "epoch.time", t);
-    printf("%d\n", (int) *t);
+    uint64_t t = 0;
+    LombFitReadAttr(lombfile, groupname, "epoch.time", &t);
+    printf("%d\n", (int) t);
 
     lombfile->status = H5Gclose(recordgroup);
+    lombfile->pulseidx++;
     return 0;
 }
     /*
@@ -140,6 +140,11 @@ int main(void)
     struct LombFile lombfile;
 
     LombFitOpen(&lombfile, FILE);
+    LombFitRead(&lombfile);
+    LombFitRead(&lombfile);
+    LombFitRead(&lombfile);
+    LombFitRead(&lombfile);
+    LombFitRead(&lombfile);
     LombFitRead(&lombfile);
     LombFitClose(&lombfile);
 
