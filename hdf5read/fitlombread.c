@@ -1,12 +1,24 @@
-/* files to read fitlomb hdf5 files and produce fitread line output */
+/* files to read fitlomb hdf5 files and produce fitread-like output */
 /* jon klein, jtklein@alaska.edu, 07/2014 */
 
 #include "hdf5.h"
 #include <stdio.h>
 #include <stdlib.h>
 
-//#include "fitdata.h"
-//#include "rprm.h"
+// crap to work with fitdata and rprm..
+typedef int8_t int8;
+typedef uint8_t uint8;
+typedef int16_t int16;
+typedef uint16_t uint16;
+typedef int32_t int32;
+typedef uint32_t uint32;
+typedef int64_t int64;
+typedef uint64_t uint64;
+
+#include "fitdata.h"
+#include "rprm.h"
+
+
 #define FILE "20140226.ksr.a.hdf5"
 
 #define REV_MAJOR 0
@@ -15,7 +27,7 @@
 struct LombFile {
     hid_t file_id;
     hid_t root_group;
-    herr_t status;
+    herr_t status; /* status of last HDF5 command */
     hsize_t npulses; /* number of pulses in file */
     hsize_t pulseidx; /* index of current pulse in array */
 };
@@ -53,8 +65,8 @@ herr_t LombFitReadAttr(struct LombFile *lombfile, char *groupname, char *attrnam
     H5Aclose(attr);
     return status;
 }
-// Use H5Literate
-int LombFitRead(struct LombFile *lombfile)//struct RadarParm *prm, struct FitData *fit)
+
+int LombFitRead(struct LombFile *lombfile, struct RadarParm *prm, struct FitData *fit)
 {
     char *groupname;
     ssize_t groupnamesize;
@@ -138,14 +150,12 @@ int LombFitSeek(struct LombFile *lombfile, int yr,int mo,int dy,int hr,int mt,in
 int main(void)
 {
     struct LombFile lombfile;
+    struct RadarParm prm;
+    struct FitData fit;
 
     LombFitOpen(&lombfile, FILE);
-    LombFitRead(&lombfile);
-    LombFitRead(&lombfile);
-    LombFitRead(&lombfile);
-    LombFitRead(&lombfile);
-    LombFitRead(&lombfile);
-    LombFitRead(&lombfile);
+    LombFitRead(&lombfile, &prm, &fit);
+    LombFitRead(&lombfile, &prm, &fit);
     LombFitClose(&lombfile);
 
     return 0;
