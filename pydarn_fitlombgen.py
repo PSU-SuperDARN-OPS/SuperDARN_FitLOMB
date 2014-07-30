@@ -159,8 +159,7 @@ class LombFit:
  
     # appends a record of the lss fit to an hdf5 file
     def WriteLSSFit(self, hdf5file):
-        # create a group for /[beam number]/[record time]
-        groupname = str(self.recordtime)
+        groupname = str(calendar.timegm(self.recordtime.timetuple()))
         grp = hdf5file.create_group(groupname)
                
         # add scalars as attributes to group
@@ -551,9 +550,12 @@ if __name__ == '__main__':
     args.pulses = int(args.pulses)
 
     # ksr, kod, pgr, ade, cvw 
-    radar_codes = ['ksr.a', 'kod.c', 'kod.d', 'ade.a', 'cve', 'pgr']
-    stimes = [datetime.datetime(2014,2,26), datetime.datetime(2014,2,27), datetime.datetime(2014,3,1), datetime.datetime(2014,3,2), datetime.datetime(2014,3,4), datetime.datetime(2014,3,6)]
-    etimes = [datetime.datetime(2014,2,27), datetime.datetime(2014,2,28), datetime.datetime(2014,3,2), datetime.datetime(2014,3,3), datetime.datetime(2014,3,5), datetime.datetime(2014,3,7)]
+    radar_codes = ['mcm.a']# ['ksr.a', 'kod.c', 'kod.d', 'ade.a', 'cve', 'pgr']
+    #stimes = [datetime.datetime(2014,2,26), datetime.datetime(2014,2,27), datetime.datetime(2014,3,1), datetime.datetime(2014,3,2), datetime.datetime(2014,3,4), datetime.datetime(2014,3,6)]
+    #etimes = [datetime.datetime(2014,2,27), datetime.datetime(2014,2,28), datetime.datetime(2014,3,2), datetime.datetime(2014,3,3), datetime.datetime(2014,3,5), datetime.datetime(2014,3,7)]
+
+    stimes = [datetime.datetime(2014,2,26,1,20)]
+    etimes = [datetime.datetime(2014,2,26,1,22)]
 
     # boilerplate..
     fileType='rawacf'
