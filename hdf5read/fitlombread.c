@@ -121,19 +121,15 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     rprm->origin.command = // char *
     rprm->cp = 
     rprm->stid = 
-
-    */ 
-    // populate rprm time struct (int16)
-    /* todo:
-    LombFitReadAttr(lombfile, groupname, "&rprm->time.yr);
-    rprm->time.mo =
-    rprm->time.dy =
-    rprm->time.hr =
-    rprm->time.mt =
-    rprm->time.sc =
-    rprm->time.us =
     */
- 
+    // populate rprm time struct (int16)
+    LombFitReadAttr(lombfile, groupname, "time.yr", &rprm->time.yr);
+    LombFitReadAttr(lombfile, groupname, "time.mo", &rprm->time.mo);
+    LombFitReadAttr(lombfile, groupname, "time.dy", &rprm->time.dy);
+    LombFitReadAttr(lombfile, groupname, "time.mt", &rprm->time.mt);
+    LombFitReadAttr(lombfile, groupname, "time.sc", &rprm->time.sc);
+    LombFitReadAttr(lombfile, groupname, "time.us", &rprm->time.us);
+
     LombFitReadAttr(lombfile, groupname, "txpow", &rprm->txpow);
     LombFitReadAttr(lombfile, groupname, "nave", &rprm->nave);
     LombFitReadAttr(lombfile, groupname, "atten", &rprm->atten);
@@ -187,7 +183,6 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     uint16_t i;
     LombFitReadAttr(lombfile, groupname, "nrang", &nrang);
 
-    printf("nrang :  %d\n", nrang);
     v = LombFitReadVector(recordgroup, "v");
     v_err = LombFitReadVector(recordgroup, "v_e");
     p_0 = LombFitReadVector(recordgroup, "pwr0");
@@ -207,7 +202,6 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     gsct =  NULL; // not produced by fitlomb
     nump = NULL; // not produced by fitlomb
 
-    printf("fitread v:  %2.f\n", v[0]);
     for(i = 0; i < nrang; i++) {
         // doubles
         fit->rng[i].v = v[i];
@@ -377,10 +371,6 @@ void RadarParmFree(struct RadarParm *ptr) {
   free(ptr);
 }
 
-
-
-
-
 int main(void)
 {
     struct LombFile lombfile;
@@ -390,12 +380,11 @@ int main(void)
     fit = FitMake();
     prm = RadarParmMake();
  
-    FitSetRng(fit, 75);
+    FitSetRng(fit, 75); // TODO: set without hardcoding..
 
-    printf("main rng[0] v (before setting):  %2.f\n", fit->rng[0].v);
     LombFitOpen(&lombfile, FILE);
     LombFitRead(&lombfile, prm, fit);
-    printf("main rng[0] v:  %2.f\n", fit->rng[0].v);
+    
     LombFitClose(&lombfile);
     
     RadarParmFree(prm);

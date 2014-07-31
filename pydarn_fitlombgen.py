@@ -62,6 +62,7 @@ GROUP_ATTR_TYPES = [\
         np.float32, np.float32, np.int16, np.int16, np.float32, np.int16, np.int16, np.int16,\
         np.int16, np.int32, np.int32, str,\
         np.int16, np.int32, np.int16, np.int16, np.int16, np.int16, np.int16, np.int16, np.int16, np.int8]
+        
 
 class LombFit:
     def __init__(self, record):
@@ -166,6 +167,15 @@ class LombFit:
         for (i,attr) in enumerate(GROUP_ATTRS):
             grp.attrs[attr] = GROUP_ATTR_TYPES[i](self.rawacf[attr])
         
+        # add times..
+        grp.attrs['time.yr'] = np.int16(self.recordtime.year)
+        grp.attrs['time.mo'] = np.int16(self.recordtime.month) 
+        grp.attrs['time.dy'] = np.int16(self.recordtime.day)
+        grp.attrs['time.hr'] = np.int16(self.recordtime.hour) 
+        grp.attrs['time.mt'] = np.int16(self.recordtime.minute)
+        grp.attrs['time.sc'] = np.int16(self.recordtime.second)
+        grp.attrs['time.us'] = np.int16(self.recordtime.microsecond) 
+
         grp.attrs['readme'] = FITLOMB_README
         grp.attrs['fitlomb.revision.major'] = np.int8(FITLOMB_REVISION_MAJOR)
         grp.attrs['fitlomb.revision.minor'] = np.int8(FITLOMB_REVISION_MINOR)
