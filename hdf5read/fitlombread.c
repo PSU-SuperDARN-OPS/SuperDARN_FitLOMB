@@ -103,7 +103,7 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     groupname = (char *) malloc (groupnamesize);
     groupnamesize = H5Lget_name_by_idx (lombfile->root_group, ".", H5_INDEX_NAME, H5_ITER_INC, lombfile->pulseidx, groupname, (size_t) groupnamesize, H5P_DEFAULT);
     recordgroup = H5Gopen(lombfile->file_id, groupname, H5P_DEFAULT);
-    /*
+    
     // read record information into RadarParm and FitData structures
     fit->revision.major = REV_MAJOR;
     fit->revision.major = REV_MINOR;
@@ -114,74 +114,72 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     fit->noise.vel = 0; // not currently produced by fitlomb 
     fit->noise.skynoise = 0; // not current produced by fitlomb
     LombFitReadAttr(lombfile, groupname, "noise.lag0", &fit->noise.lag0);
-    */
-    /*
+    /* 
     // populate rprm origin struct
     rprm->origin.code = // char
     rprm->origin.time = // char *
     rprm->origin.command = // char *
-    
     rprm->cp = 
     rprm->stid = 
 
+    */ 
     // populate rprm time struct (int16)
-    rprm->time.yr =
+    /* todo:
+    LombFitReadAttr(lombfile, groupname, "&rprm->time.yr);
     rprm->time.mo =
     rprm->time.dy =
     rprm->time.hr =
     rprm->time.mt =
     rprm->time.sc =
     rprm->time.us =
-    
-    rprm->txpow
-    rprm->nave
-    rprm->atten
-    rprm->lagfr
-    rprm->smsep
-    rprm->ercod
-
-    // populate stat struct (int16)
-    rprm->stat.agc = 
-    rprm->stat.lopwr = 
-
-    // populate noise struct (float)
-    rprm->noise.search =
-    rprm->noise.mean = 
-
-    rprm->channel
-    rprm->bmnum
-    rprm->bmazm
-    rprm->scan
-    rprm->rxrise
-
-    // populate intt structure (???)
-    rprm->intt.sc
-    rprm->intt.us
-
-    rprm->txpl
-    rprm->mpinc
-    rprm->mplgs
-    rprm->mplgexs
-    rprm->nrang
-    rprm->frang
-    rprm->rsep
-    rprm->xcf
-    rprm->tfreq
-    rprm->offset
-    rprm->offset
-    rprm->ifmode
-
-    rprm->maxpwr
-    rprm->lvmax
-
-    // copy pulse and lag vectors?
-    rprm->pulse
-    rprm->lag
-    rprm->combf
-
-    
     */
-    // populate fit->rng vectors    
+ 
+    LombFitReadAttr(lombfile, groupname, "txpow", &rprm->txpow);
+    LombFitReadAttr(lombfile, groupname, "nave", &rprm->nave);
+    LombFitReadAttr(lombfile, groupname, "atten", &rprm->atten);
+    LombFitReadAttr(lombfile, groupname, "lagfr", &rprm->lagfr); 
+    LombFitReadAttr(lombfile, groupname, "smsep", &rprm->smsep);
+    LombFitReadAttr(lombfile, groupname, "ercod", &rprm->ercod);
+    
+    // populate stat struct (int16)
+    LombFitReadAttr(lombfile, groupname, "stat.agc", &rprm->stat.agc);
+    LombFitReadAttr(lombfile, groupname, "stat.lopwr", &rprm->stat.lopwr);
+    
+    // populate noise struct (float)
+    LombFitReadAttr(lombfile, groupname, "noise.search", &rprm->noise.search);
+    LombFitReadAttr(lombfile, groupname, "noise.mean", &rprm->noise.mean);
+    
+    LombFitReadAttr(lombfile, groupname, "channel", &rprm->channel);
+    LombFitReadAttr(lombfile, groupname, "bmnum", &rprm->bmnum);
+    LombFitReadAttr(lombfile, groupname, "bmazm", &rprm->bmazm);
+    LombFitReadAttr(lombfile, groupname, "scan", &rprm->scan);
+    LombFitReadAttr(lombfile, groupname, "rxrise", &rprm->rxrise);
+
+    // populate intt structure
+    LombFitReadAttr(lombfile, groupname, "intt.sc", &rprm->intt.sc);
+    LombFitReadAttr(lombfile, groupname, "intt.us", &rprm->intt.us);
+    
+    LombFitReadAttr(lombfile, groupname, "txpl", &rprm->txpl);
+    LombFitReadAttr(lombfile, groupname, "mpinc", &rprm->mpinc);
+    LombFitReadAttr(lombfile, groupname, "mplgs", &rprm->mplgs);
+    //LombFitReadAttr(lombfile, groupname, "", &rprm->mplgexs);
+    LombFitReadAttr(lombfile, groupname, "nrang", &rprm->nrang);
+    LombFitReadAttr(lombfile, groupname, "frang", &rprm->frang);
+    LombFitReadAttr(lombfile, groupname, "rsep", &rprm->rsep);
+    //LombFitReadAttr(lombfile, groupname, "xc", &rprm->xcf);
+    LombFitReadAttr(lombfile, groupname, "tfreq", &rprm->tfreq);
+    LombFitReadAttr(lombfile, groupname, "offset", &rprm->offset);
+    //LombFitReadAttr(lombfile, groupname, "", &rprm->ifmode);
+
+    LombFitReadAttr(lombfile, groupname, "mxpwr", &rprm->mxpwr);
+    LombFitReadAttr(lombfile, groupname, "lvmax", &rprm->lvmax);
+    
+    // copy pulse and lag vectors?
+    //LombFitReadAttr(lombfile, groupname, "", &rprm->pulse);
+    //LombFitReadAttr(lombfile, groupname, "", &rprm->lag);
+    //LombFitReadAttr(lombfile, groupname, "", &rprm->combf);
+
+    // populate fit->rng vectors  
     double *v, *v_err, *p_0, *p_l, *p_l_err, *w_l, *w_l_err, *w_s, *w_s_err, *phi0, *phi0_err, *sdev_l, *sdev_s, *sdev_phi;
     int32_t *qflg, *gsct;
     int8_t *nump;
@@ -191,7 +189,6 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
 
     printf("nrang :  %d\n", nrang);
     v = LombFitReadVector(recordgroup, "v");
-/*
     v_err = LombFitReadVector(recordgroup, "v_e");
     p_0 = LombFitReadVector(recordgroup, "pwr0");
     p_l = LombFitReadVector(recordgroup, "p_l");
@@ -209,13 +206,11 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     qflg = LombFitReadVector(recordgroup, "qflg");
     gsct =  NULL; // not produced by fitlomb
     nump = NULL; // not produced by fitlomb
-*/
 
     printf("fitread v:  %2.f\n", v[0]);
     for(i = 0; i < nrang; i++) {
         // doubles
         fit->rng[i].v = v[i];
-}/*
         fit->rng[i].v_err = v_err[i];
         fit->rng[i].p_0 = p_0[i];
         fit->rng[i].p_l = p_l[i];
@@ -242,7 +237,7 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     // ignore elevation for now..
     fit->xrng = NULL;
     fit->elv = NULL;
-*/
+
     free(v);
     free(v_err);
     free(p_0);
@@ -316,21 +311,94 @@ int FitSetRng(struct FitData *ptr,int nrang) {
     return 0;
 }
 
+/* copied from radar1.21/src/rprm.c */
+struct RadarParm *RadarParmMake() {
+  struct RadarParm *ptr=NULL;
+
+  ptr=malloc(sizeof(struct RadarParm));
+  if (ptr==NULL) return NULL;
+  memset(ptr,0,sizeof(struct RadarParm));
+  ptr->origin.time=NULL;
+  ptr->origin.command=NULL;
+  ptr->pulse=NULL;
+  ptr->lag[0]=NULL;
+  ptr->lag[1]=NULL;
+  ptr->combf=NULL;
+  return ptr;
+}
+
+int RadarParmSetOriginCommand(struct RadarParm *ptr,char *str) {
+  char *tmp=NULL;
+  if (ptr==NULL) return -1;
+
+  if (str==NULL) {
+    if (ptr->origin.command !=NULL) free(ptr->origin.command);
+    ptr->origin.command=NULL;
+    return 0;
+  }
+
+  if (ptr->origin.command==NULL) tmp=malloc(strlen(str)+1);
+  else tmp=realloc(ptr->origin.command,strlen(str)+1);
+
+  if (tmp==NULL) return -1;
+  strcpy(tmp,str);
+  ptr->origin.command=tmp;
+  return 0;
+
+}
+
+int RadarParmSetCombf(struct RadarParm *ptr,char *str) {
+  void *tmp=NULL;
+  if (ptr==NULL) return -1;
+
+  if (str==NULL) {
+    if (ptr->combf !=NULL) free(ptr->combf);
+    ptr->combf=NULL;
+    return 0;
+  }
+
+  if (ptr->combf==NULL) tmp=malloc(strlen(str)+1);
+  else tmp=realloc(ptr->combf,strlen(str)+1);
+
+  if (tmp==NULL) return -1;
+  strcpy(tmp,str);
+  ptr->combf=tmp;
+  return 0;
+}
+
+void RadarParmFree(struct RadarParm *ptr) {
+  if (ptr==NULL) return;
+  if (ptr->origin.time !=NULL) free(ptr->origin.time);
+  if (ptr->origin.command !=NULL) free(ptr->origin.command);
+  if (ptr->pulse !=NULL) free(ptr->pulse);
+  if (ptr->lag[0] !=NULL) free(ptr->lag[0]);
+  if (ptr->lag[1] !=NULL) free(ptr->lag[1]);
+  if (ptr->combf !=NULL) free(ptr->combf);
+  free(ptr);
+}
+
+
+
+
 
 int main(void)
 {
     struct LombFile lombfile;
-    struct RadarParm prm;
+    struct RadarParm *prm;
     struct FitData *fit;
 
     fit = FitMake();
+    prm = RadarParmMake();
+ 
     FitSetRng(fit, 75);
 
     printf("main rng[0] v (before setting):  %2.f\n", fit->rng[0].v);
     LombFitOpen(&lombfile, FILE);
-    LombFitRead(&lombfile, &prm, fit);
+    LombFitRead(&lombfile, prm, fit);
     printf("main rng[0] v:  %2.f\n", fit->rng[0].v);
     LombFitClose(&lombfile);
-
+    
+    RadarParmFree(prm);
+    FitFree(fit);
     return 0;
 }
