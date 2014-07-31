@@ -58,8 +58,8 @@ GROUP_ATTRS = [\
         'intt.sc', 'intt.us', 'txpl', 'mpinc', 'mppul', 'mplgs', 'nrang', 'frang', 'rsep', 'xcf']
 
 GROUP_ATTR_TYPES = [\
-        np.int16, np.int16, np.int16, np.int16, np.int16, np.int16, np.int8, np.int8,\
-        np.float32, np.float32, np.int8, np.int8, np.float32, np.int16, np.int16, np.int16,\
+        np.int16, np.int16, np.int16, np.int16, np.int16, np.int16, np.int16, np.int16,\
+        np.float32, np.float32, np.int16, np.int16, np.float32, np.int16, np.int16, np.int16,\
         np.int16, np.int32, np.int32, str,\
         np.int16, np.int32, np.int16, np.int16, np.int16, np.int16, np.int16, np.int16, np.int16, np.int8]
 
@@ -167,8 +167,8 @@ class LombFit:
             grp.attrs[attr] = GROUP_ATTR_TYPES[i](self.rawacf[attr])
         
         grp.attrs['readme'] = FITLOMB_README
-        grp.attrs['fitlomb.revision.major'] = np.int16(FITLOMB_REVISION_MAJOR)
-        grp.attrs['fitlomb.revision.minor'] = np.int16(FITLOMB_REVISION_MINOR)
+        grp.attrs['fitlomb.revision.major'] = np.int8(FITLOMB_REVISION_MAJOR)
+        grp.attrs['fitlomb.revision.minor'] = np.int8(FITLOMB_REVISION_MINOR)
         grp.attrs['fitlomb.bayes.iterations'] = np.int16(self.maxfreqs)
         grp.attrs['origin.code'] = ORIGIN_CODE # TODO: ADD ARGUEMENTS
         grp.attrs['origin.time'] = str(datetime.datetime.now())
@@ -182,42 +182,42 @@ class LombFit:
                 grp.attrs[gattr] = self.rawacf[gattr]
         
         grp.attrs['epoch.time'] = calendar.timegm(self.recordtime.timetuple())
-        grp.attrs['noise.lag0'] = np.float32(self.noise) # lag zero power from noise acf?
+        grp.attrs['noise.lag0'] = np.float64(self.noise) # lag zero power from noise acf?
         
         # copy over vectors from rawacf
         add_compact_dset(hdf5file, groupname, 'ptab', np.int16(self.rawacf['ptab']), h5py.h5t.STD_I16BE)
         add_compact_dset(hdf5file, groupname, 'ltab', np.int16(self.rawacf['ltab']), h5py.h5t.STD_I16BE)
         add_compact_dset(hdf5file, groupname, 'slist', np.int16(self.rawacf['slist']), h5py.h5t.STD_I16BE)
-        add_compact_dset(hdf5file, groupname, 'pwr0', np.float32(self.rawacf['pwr0']), h5py.h5t.NATIVE_FLOAT)
+        add_compact_dset(hdf5file, groupname, 'pwr0', np.int32(self.rawacf['pwr0']), h5py.h5t.STD_I32BE)
         
         # add calculated parameters
-        add_compact_dset(hdf5file, groupname, 'qflg', np.int8(self.qflg), h5py.h5t.STD_I8BE)
+        add_compact_dset(hdf5file, groupname, 'qflg', np.int32(self.qflg), h5py.h5t.STD_I32BE)
         add_compact_dset(hdf5file, groupname, 'gflg', np.int8(self.gflg), h5py.h5t.STD_I8BE)
         add_compact_dset(hdf5file, groupname, 'iflg', np.int8(self.iflg), h5py.h5t.STD_I8BE)
         add_compact_dset(hdf5file, groupname, 'nlag', np.int16(self.nlag), h5py.h5t.STD_I16BE)
         
-        add_compact_dset(hdf5file, groupname, 'p_l', np.float32(self.p_l), h5py.h5t.NATIVE_FLOAT)
-        add_compact_dset(hdf5file, groupname, 'p_l_e', np.float32(self.p_l_e), h5py.h5t.NATIVE_FLOAT)
-        add_compact_dset(hdf5file, groupname, 'w_l', np.float32(self.w_l), h5py.h5t.NATIVE_FLOAT)
-        add_compact_dset(hdf5file, groupname, 'w_l_e', np.float32(self.w_l_e), h5py.h5t.NATIVE_FLOAT)
-        add_compact_dset(hdf5file, groupname, 'w_l_std', np.float32(self.w_l_std), h5py.h5t.NATIVE_FLOAT)
-        add_compact_dset(hdf5file, groupname, 'v', np.float32(self.v_l), h5py.h5t.NATIVE_FLOAT)
-        add_compact_dset(hdf5file, groupname, 'v_e', np.float32(self.v_l_e), h5py.h5t.NATIVE_FLOAT)
-        add_compact_dset(hdf5file, groupname, 'v_l_std', np.float32(self.v_l_std), h5py.h5t.NATIVE_FLOAT)
-        add_compact_dset(hdf5file, groupname, 'fit_snr_l', np.float32(self.fit_snr_l), h5py.h5t.NATIVE_FLOAT)
-        add_compact_dset(hdf5file, groupname, 'r2_phase_l', np.float32(self.r2_phase_l), h5py.h5t.NATIVE_FLOAT)
+        add_compact_dset(hdf5file, groupname, 'p_l', np.float64(self.p_l), h5py.h5t.NATIVE_DOUBLE)
+        add_compact_dset(hdf5file, groupname, 'p_l_e', np.float64(self.p_l_e), h5py.h5t.NATIVE_DOUBLE)
+        add_compact_dset(hdf5file, groupname, 'w_l', np.float64(self.w_l), h5py.h5t.NATIVE_DOUBLE)
+        add_compact_dset(hdf5file, groupname, 'w_l_e', np.float64(self.w_l_e), h5py.h5t.NATIVE_DOUBLE)
+        add_compact_dset(hdf5file, groupname, 'w_l_std', np.float64(self.w_l_std), h5py.h5t.NATIVE_DOUBLE)
+        add_compact_dset(hdf5file, groupname, 'v', np.float64(self.v_l), h5py.h5t.NATIVE_DOUBLE)
+        add_compact_dset(hdf5file, groupname, 'v_e', np.float64(self.v_l_e), h5py.h5t.NATIVE_DOUBLE)
+        add_compact_dset(hdf5file, groupname, 'v_l_std', np.float64(self.v_l_std), h5py.h5t.NATIVE_DOUBLE)
+        add_compact_dset(hdf5file, groupname, 'fit_snr_l', np.float64(self.fit_snr_l), h5py.h5t.NATIVE_DOUBLE)
+        add_compact_dset(hdf5file, groupname, 'r2_phase_l', np.float64(self.r2_phase_l), h5py.h5t.NATIVE_DOUBLE)
 
         if CALC_SIGMA:
-            add_compact_dset(hdf5file, groupname, 'p_s', np.float32(self.p_s), h5py.h5t.NATIVE_FLOAT)
-            add_compact_dset(hdf5file, groupname, 'p_s_e', np.float32(self.p_s_e), h5py.h5t.NATIVE_FLOAT)
-            add_compact_dset(hdf5file, groupname, 'w_s', np.float32(self.w_s), h5py.h5t.NATIVE_FLOAT)
-            add_compact_dset(hdf5file, groupname, 'w_s_e', np.float32(self.w_s_e), h5py.h5t.NATIVE_FLOAT)
-            add_compact_dset(hdf5file, groupname, 'w_s_std', np.float32(self.w_s_std), h5py.h5t.NATIVE_FLOAT)
-            add_compact_dset(hdf5file, groupname, 'v_s', np.float32(self.v_s), h5py.h5t.NATIVE_FLOAT)
-            add_compact_dset(hdf5file, groupname, 'v_s_e', np.float32(self.v_s_e), h5py.h5t.NATIVE_FLOAT)
-            add_compact_dset(hdf5file, groupname, 'v_s_std', np.float32(self.v_s_std), h5py.h5t.NATIVE_FLOAT)
-            add_compact_dset(hdf5file, groupname, 'fit_snr_s', np.float32(self.fit_snr_s), h5py.h5t.NATIVE_FLOAT)
-            add_compact_dset(hdf5file, groupname, 'r2_phase_s', np.float32(self.r2_phase_s), h5py.h5t.NATIVE_FLOAT)
+            add_compact_dset(hdf5file, groupname, 'p_s', np.float64(self.p_s), h5py.h5t.NATIVE_DOUBLE)
+            add_compact_dset(hdf5file, groupname, 'p_s_e', np.float64(self.p_s_e), h5py.h5t.NATIVE_DOUBLE)
+            add_compact_dset(hdf5file, groupname, 'w_s', np.float64(self.w_s), h5py.h5t.NATIVE_DOUBLE)
+            add_compact_dset(hdf5file, groupname, 'w_s_e', np.float64(self.w_s_e), h5py.h5t.NATIVE_DOUBLE)
+            add_compact_dset(hdf5file, groupname, 'w_s_std', np.float64(self.w_s_std), h5py.h5t.NATIVE_DOUBLE)
+            add_compact_dset(hdf5file, groupname, 'v_s', np.float64(self.v_s), h5py.h5t.NATIVE_DOUBLE)
+            add_compact_dset(hdf5file, groupname, 'v_s_e', np.float64(self.v_s_e), h5py.h5t.NATIVE_DOUBLE)
+            add_compact_dset(hdf5file, groupname, 'v_s_std', np.float64(self.v_s_std), h5py.h5t.NATIVE_DOUBLE)
+            add_compact_dset(hdf5file, groupname, 'fit_snr_s', np.float64(self.fit_snr_s), h5py.h5t.NATIVE_DOUBLE)
+            add_compact_dset(hdf5file, groupname, 'r2_phase_s', np.float64(self.r2_phase_s), h5py.h5t.NATIVE_DOUBLE)
         
         if KEEP_SAMPLES:
             grp.create_dataset('acfi', data = self.acfi)

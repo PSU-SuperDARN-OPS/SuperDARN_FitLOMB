@@ -4,6 +4,7 @@
 #include "hdf5.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 // to work with fitdata and rprm..
 typedef int8_t int8;
@@ -102,7 +103,7 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     groupname = (char *) malloc (groupnamesize);
     groupnamesize = H5Lget_name_by_idx (lombfile->root_group, ".", H5_INDEX_NAME, H5_ITER_INC, lombfile->pulseidx, groupname, (size_t) groupnamesize, H5P_DEFAULT);
     recordgroup = H5Gopen(lombfile->file_id, groupname, H5P_DEFAULT);
-
+    /*
     // read record information into RadarParm and FitData structures
     fit->revision.major = REV_MAJOR;
     fit->revision.major = REV_MINOR;
@@ -113,6 +114,7 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     fit->noise.vel = 0; // not currently produced by fitlomb 
     fit->noise.skynoise = 0; // not current produced by fitlomb
     LombFitReadAttr(lombfile, groupname, "noise.lag0", &fit->noise.lag0);
+    */
     /*
     // populate rprm origin struct
     rprm->origin.code = // char
@@ -187,7 +189,9 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     uint16_t i;
     LombFitReadAttr(lombfile, groupname, "nrang", &nrang);
 
+    printf("nrang :  %d\n", nrang);
     v = LombFitReadVector(recordgroup, "v");
+/*
     v_err = LombFitReadVector(recordgroup, "v_e");
     p_0 = LombFitReadVector(recordgroup, "pwr0");
     p_l = LombFitReadVector(recordgroup, "p_l");
@@ -205,10 +209,13 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     qflg = LombFitReadVector(recordgroup, "qflg");
     gsct =  NULL; // not produced by fitlomb
     nump = NULL; // not produced by fitlomb
-    
+*/
+
+    printf("fitread v:  %2.f\n", v[0]);
     for(i = 0; i < nrang; i++) {
         // doubles
         fit->rng[i].v = v[i];
+}/*
         fit->rng[i].v_err = v_err[i];
         fit->rng[i].p_0 = p_0[i];
         fit->rng[i].p_l = p_l[i];
@@ -235,7 +242,7 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     // ignore elevation for now..
     fit->xrng = NULL;
     fit->elv = NULL;
-
+*/
     free(v);
     free(v_err);
     free(p_0);
@@ -253,30 +260,76 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     lombfile->status = H5Gclose(recordgroup);
     return 0;
 }
-/*
+
+/* iterate through records, get as close as you can without going over */
 int LombFitSeek(struct LombFile *lombfile, int yr,int mo,int dy,int hr,int mt,int sc,double *atme)
 {
     hsize_t i;
     char *name;
     ssize_t size;
 
-    // iterate through record names looking for index of closest record time to given time
-    
+    ; 
 }
 
-*/
 
+/* copied from fit.1.35/src/fit.c */
+struct FitData * FitMake() {
+    struct FitData *ptr=NULL;
+
+    ptr=malloc(sizeof(struct FitData));
+
+    if (ptr==NULL) return NULL;
+
+    memset(ptr,0,sizeof(struct FitData));
+
+    ptr->rng=NULL;
+    ptr->xrng=NULL;
+    ptr->elv=NULL;
+    return ptr;
+}
+
+void FitFree(struct FitData *ptr) {
+    if (ptr==NULL) return;
+    if (ptr->rng !=NULL) free(ptr->rng);
+    if (ptr->xrng !=NULL) free(ptr->xrng);
+    if (ptr->elv !=NULL) free(ptr->elv);
+    free(ptr);
+    return;
+}
+
+int FitSetRng(struct FitData *ptr,int nrang) {
+    void *tmp=NULL;
+    if (ptr==NULL) return -1;
+
+    if (nrang==0) {
+        if (ptr->rng !=NULL) free(ptr->rng);
+            ptr->rng=NULL;
+            return 0;
+    }
+
+    if (ptr->rng==NULL) tmp=malloc(sizeof(struct FitRange)*nrang);
+    else tmp=realloc(ptr->rng,sizeof(struct FitRange)*nrang);
+
+    if (tmp==NULL) return -1;
+    memset(tmp,0,sizeof(struct FitRange)*nrang);
+    ptr->rng=tmp;
+    return 0;
+}
 
 
 int main(void)
 {
     struct LombFile lombfile;
     struct RadarParm prm;
-    struct FitData fit;
+    struct FitData *fit;
 
+    fit = FitMake();
+    FitSetRng(fit, 75);
+
+    printf("main rng[0] v (before setting):  %2.f\n", fit->rng[0].v);
     LombFitOpen(&lombfile, FILE);
-    LombFitRead(&lombfile, &prm, &fit);
-    LombFitRead(&lombfile, &prm, &fit);
+    LombFitRead(&lombfile, &prm, fit);
+    printf("main rng[0] v:  %2.f\n", fit->rng[0].v);
     LombFitClose(&lombfile);
 
     return 0;
