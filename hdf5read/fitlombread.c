@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 // to work with fitdata and rprm..
 typedef int8_t int8;
@@ -250,14 +251,30 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     return 0;
 }
 
-/* iterate through records, get as close as you can without going over */
+/* iterate through records, get as close possible going over */
 int LombFitSeek(struct LombFile *lombfile, int yr,int mo,int dy,int hr,int mt,int sc,double *atme)
 {
-    hsize_t i;
-    char *name;
-    ssize_t size;
+    // convert seek time to epoch time 
+    
+    struct tm t;
+    time_t seektime;
+    uint16_t i;
 
-    ; 
+    t.tm_year = yr - 1900;
+    t.tm_mon = mo; 
+    t.tm_mday = dy;
+    t.tm_hour = hr;
+    t.tm_min = mt;
+    t.tm_sec = sc;
+    t.tm_isdst = 0
+    seektime = mktime(&t)
+
+    // check against epoch time on records
+    lombfile->pulseidx = 0;
+
+    for(i = 0; i < lombfile->npulses; i++) {
+                
+    }
 }
 
 
