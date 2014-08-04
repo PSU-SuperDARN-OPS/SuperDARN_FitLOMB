@@ -23,6 +23,9 @@ typedef uint64_t uint64;
 
 #define FILE "20140226.ksr.a.hdf5"
 
+#define ORIGIN "fitlombread"
+#define ORIGIN_CODE 0
+#define COMMENT "fitlombread" 
 #define REV_MAJOR 0
 #define REV_MINOR 1
 
@@ -107,22 +110,24 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     
     // read record information into RadarParm and FitData structures
     fit->revision.major = REV_MAJOR;
-    fit->revision.major = REV_MINOR;
-    rprm->revision.major = REV_MAJOR;
-    rprm->revision.major = REV_MAJOR;
+    fit->revision.minor = REV_MINOR;
+    // need to malloc struct.
+    //rprm->revision.major = REV_MAJOR;
+    //rprm->revision.minor = REV_MINOR;
 
     // read in noise information
     fit->noise.vel = 0; // not currently produced by fitlomb 
     fit->noise.skynoise = 0; // not current produced by fitlomb
     LombFitReadAttr(lombfile, groupname, "noise.lag0", &fit->noise.lag0);
-    /* 
     // populate rprm origin struct
-    rprm->origin.code = // char
-    rprm->origin.time = // char *
-    rprm->origin.command = // char *
-    rprm->cp = 
-    rprm->stid = 
-    */
+    //rprm->origin.time = // char *
+    
+    RadarParmSetOriginCommand(rprm, ORIGIN);
+    RadarParmSetCombf(rprm, COMMENT);
+    rprm->origin.code = ORIGIN_CODE;
+
+    LombFitReadAttr(lombfile, groupname, "stid", &rprm->stid);
+    LombFitReadAttr(lombfile, groupname, "cp", &rprm->cp);
     // populate rprm time struct (int16)
     LombFitReadAttr(lombfile, groupname, "time.yr", &rprm->time.yr);
     LombFitReadAttr(lombfile, groupname, "time.mo", &rprm->time.mo);
@@ -255,26 +260,50 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
 int LombFitSeek(struct LombFile *lombfile, int yr,int mo,int dy,int hr,int mt,int sc,double *atme)
 {
     // convert seek time to epoch time 
-    
     struct tm t;
     time_t seektime;
+    int64_t recordtime;
     uint16_t i;
 
     t.tm_year = yr - 1900;
-    t.tm_mon = mo; 
+    t.tm_mon = mo - 1;  // months are 0 to 11...
     t.tm_mday = dy;
     t.tm_hour = hr;
     t.tm_min = mt;
     t.tm_sec = sc;
-    t.tm_isdst = 0
-    seektime = mktime(&t)
-
-    // check against epoch time on records
+    t.tm_isdst = 0;
+    t.tm_gmtoff = 0;
+    seektime = timegm(&t);
+    *atme = 0;   
     lombfile->pulseidx = 0;
 
+    // check epoch time on records, compare against given time
     for(i = 0; i < lombfile->npulses; i++) {
-                
+        char *groupname;
+        ssize_t groupnamesize;
+        hid_t recordgroup;
+
+        // get name of next record (get name size, allocate space, grab name)
+        groupnamesize = 1 + H5Lget_name_by_idx (lombfile->root_group, ".", H5_INDEX_NAME, H5_ITER_INC, i, NULL, 0, H5P_DEFAULT);
+        groupname = (char *) malloc (groupnamesize);
+        groupnamesize = H5Lget_name_by_idx (lombfile->root_group, ".", H5_INDEX_NAME, H5_ITER_INC, i, groupname, (size_t) groupnamesize, H5P_DEFAULT);
+        recordgroup = H5Gopen(lombfile->file_id, groupname, H5P_DEFAULT);
+        
+        // read off record time
+        LombFitReadAttr(lombfile, groupname, "epoch.time", &recordtime);
+
+        // compare with seek time, break and decrement if greater
+        if (recordtime > seektime) {
+            uint32_t time_us;
+            lombfile->pulseidx = i - 1;
+
+            LombFitReadAttr(lombfile, groupname, "time.us", &time_us);
+            *atme = (double) recordtime + ((double) time_us) / 1e6;
+            break;
+        }
+                    
     }
+
 }
 
 
@@ -388,11 +417,13 @@ void RadarParmFree(struct RadarParm *ptr) {
   free(ptr);
 }
 
+/* example test code */
 int main(void)
 {
     struct LombFile lombfile;
     struct RadarParm *prm;
     struct FitData *fit;
+    double atme;
 
     fit = FitMake();
     prm = RadarParmMake();
@@ -401,10 +432,13 @@ int main(void)
 
     LombFitOpen(&lombfile, FILE);
     LombFitRead(&lombfile, prm, fit);
-    
+    LombFitSeek(&lombfile, 2014,2,26,1,20,27, &atme);
+    LombFitRead(&lombfile, prm, fit);
     LombFitClose(&lombfile);
     
     RadarParmFree(prm);
     FitFree(fit);
     return 0;
 }
+
+

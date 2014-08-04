@@ -174,7 +174,7 @@ class LombFit:
         grp.attrs['time.hr'] = np.int16(self.recordtime.hour) 
         grp.attrs['time.mt'] = np.int16(self.recordtime.minute)
         grp.attrs['time.sc'] = np.int16(self.recordtime.second)
-        grp.attrs['time.us'] = np.int16(self.recordtime.microsecond) 
+        grp.attrs['time.us'] = np.int32(self.recordtime.microsecond) 
 
         grp.attrs['readme'] = FITLOMB_README
         grp.attrs['fitlomb.revision.major'] = np.int8(FITLOMB_REVISION_MAJOR)
