@@ -2,7 +2,7 @@ struct LombFile {
     hid_t file_id;
     hid_t root_group;
     herr_t status; /* status of last HDF5 command */
-    hsize_t npulses; /* number of pulses in file */
+    hsize_t nrecords; /* number of pulses in file */
     hsize_t pulseidx; /* index of current pulse in array */
 };
 

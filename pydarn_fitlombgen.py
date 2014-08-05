@@ -30,7 +30,7 @@ import pdb
 from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes, calc_zoomvar
 
 FITLOMB_REVISION_MAJOR = 1
-FITLOMB_REVISION_MINOR = 0
+FITLOMB_REVISION_MINOR = 1
 ORIGIN_CODE = 'pydarn_fitlombgen.py'
 DATA_DIR = './baddata/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'

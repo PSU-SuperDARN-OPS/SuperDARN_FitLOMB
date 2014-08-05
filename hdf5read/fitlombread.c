@@ -46,7 +46,7 @@ int32_t LombFitOpen(struct LombFile *lombfile, char *filename)
     lombfile->file_id = H5Fopen(FILE, H5F_ACC_RDONLY, H5P_DEFAULT);
     lombfile->root_group = H5Gopen(lombfile->file_id, "/", H5P_DEFAULT);
     lombfile->status = H5Gget_info (lombfile->root_group, &ginfo);
-    lombfile->npulses = ginfo.nlinks;
+    lombfile->nrecords = ginfo.nlinks;
     lombfile->pulseidx = 0;
     return lombfile->status;
 }
@@ -106,7 +106,7 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
 
     
     // return zero if no pulses remain to be read 
-    if (lombfile->pulseidx >= lombfile->npulses || lombfile->npulses < 0) {
+    if (lombfile->pulseidx >= lombfile->nrecords || lombfile->nrecords < 0) {
         return 0;
     }
 
@@ -281,7 +281,7 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     return 1;
 }
 
-/* iterate through records, get as close possible going over */
+/* iterate through records, get as close possible without going over */
 int LombFitSeek(struct LombFile *lombfile, int yr,int mo,int dy,int hr,int mt,int sc,double *atme)
 {
     // convert seek time to epoch time 
@@ -303,7 +303,7 @@ int LombFitSeek(struct LombFile *lombfile, int yr,int mo,int dy,int hr,int mt,in
     lombfile->pulseidx = 0;
 
     // check epoch time on records, compare against given time
-    for(i = 0; i < lombfile->npulses; i++) {
+    for(i = 0; i < lombfile->nrecords; i++) {
         char *groupname;
         ssize_t groupnamesize;
 
