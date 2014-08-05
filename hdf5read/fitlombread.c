@@ -158,8 +158,8 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     LombFitReadAttr(lombfile, groupname, "ercod", &rprm->ercod);
     
     // populate stat struct (int16)
-    LombFitReadAttr(lombfile, groupname, "stat.agc", &rprm->stat.agc);
-    LombFitReadAttr(lombfile, groupname, "stat.lopwr", &rprm->stat.lopwr);
+    //LombFitReadAttr(lombfile, groupname, "stat.agc", &rprm->stat.agc);
+    //LombFitReadAttr(lombfile, groupname, "stat.lopwr", &rprm->stat.lopwr);
     
     // populate noise struct (float)
     LombFitReadAttr(lombfile, groupname, "noise.search", &rprm->noise.search);
@@ -522,7 +522,7 @@ int main(void)
     
     // read the first record
     LombFitRead(&lombfile, prm, fit);
-
+    
     // seek to a time, then read the record at that time
     LombFitSeek(&lombfile, 2014,2,26,1,20,27, &atme);
     LombFitRead(&lombfile, prm, fit);
@@ -532,7 +532,7 @@ int main(void)
         printf(".");
     }
     printf("\n");
-
+    
     // clean up..
     LombFitClose(&lombfile);
     RadarParmFree(prm);
