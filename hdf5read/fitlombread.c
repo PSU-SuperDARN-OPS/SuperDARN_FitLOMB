@@ -1,4 +1,5 @@
 /* files to read fitlomb hdf5 files and produce fitread-like output */
+/* see main for example usage */
 /* jon klein, jtklein@alaska.edu, 07/2014 */
 
 #include "hdf5.h"
@@ -17,9 +18,9 @@ typedef uint32_t uint32;
 typedef int64_t int64;
 typedef uint64_t uint64;
 
-#include "fitdata.h"
 #include "rprm.h"
-
+#include "fitdata.h"
+#include "fitlombread.h"
 
 #define FILE "20140226.ksr.a.hdf5"
 
@@ -29,15 +30,16 @@ typedef uint64_t uint64;
 #define REV_MAJOR 0
 #define REV_MINOR 1
 
-struct LombFile {
-    hid_t file_id;
-    hid_t root_group;
-    herr_t status; /* status of last HDF5 command */
-    hsize_t npulses; /* number of pulses in file */
-    hsize_t pulseidx; /* index of current pulse in array */
-};
+// prototype copied functions..
+void FitFree(struct FitData *ptr);
+struct FitData * FitMake();
+int FitSetRng(struct FitData *ptr,int nrang);
+struct RadarParm *RadarParmMake();
+int RadarParmSetOriginCommand(struct RadarParm *ptr,char *str);
+int RadarParmSetCombf(struct RadarParm *ptr,char *str);
+void RadarParmFree(struct RadarParm *ptr);
 
-int LombFitOpen(struct LombFile *lombfile, char *filename)
+int32_t LombFitOpen(struct LombFile *lombfile, char *filename)
 {
     H5G_info_t ginfo;
 
@@ -49,7 +51,7 @@ int LombFitOpen(struct LombFile *lombfile, char *filename)
     return lombfile->status;
 }
 
-int LombFitClose(struct LombFile *lombfile)
+int32_t LombFitClose(struct LombFile *lombfile)
 {
     lombfile->status = H5Gclose(lombfile->root_group);
     lombfile->status = H5Fclose(lombfile->file_id);
@@ -102,6 +104,12 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     ssize_t groupnamesize;
     hid_t recordgroup;
 
+    
+    // return zero if no pulses remain to be read 
+    if (lombfile->pulseidx >= lombfile->npulses || lombfile->npulses < 0) {
+        return 0;
+    }
+
     // get name of next record (get name size, allocate space, grab name)
     groupnamesize = 1 + H5Lget_name_by_idx (lombfile->root_group, ".", H5_INDEX_NAME, H5_ITER_INC, lombfile->pulseidx, NULL, 0, H5P_DEFAULT);
     groupname = (char *) malloc (groupnamesize);
@@ -125,6 +133,12 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     RadarParmSetOriginCommand(rprm, ORIGIN);
     RadarParmSetCombf(rprm, COMMENT);
     rprm->origin.code = ORIGIN_CODE;
+    
+    time_t origin_time_raw;
+    struct tm *origin_time;
+    time(&origin_time_raw);
+    origin_time = gmtime(&origin_time_raw);
+    RadarParmSetOriginTime(rprm, asctime(origin_time));
 
     LombFitReadAttr(lombfile, groupname, "stid", &rprm->stid);
     LombFitReadAttr(lombfile, groupname, "cp", &rprm->cp);
@@ -163,6 +177,7 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     
     LombFitReadAttr(lombfile, groupname, "txpl", &rprm->txpl);
     LombFitReadAttr(lombfile, groupname, "mpinc", &rprm->mpinc);
+    LombFitReadAttr(lombfile, groupname, "mppul", &rprm->mppul);
     LombFitReadAttr(lombfile, groupname, "mplgs", &rprm->mplgs);
     //LombFitReadAttr(lombfile, groupname, "", &rprm->mplgexs);
     LombFitReadAttr(lombfile, groupname, "nrang", &rprm->nrang);
@@ -175,11 +190,13 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
 
     LombFitReadAttr(lombfile, groupname, "mxpwr", &rprm->mxpwr);
     LombFitReadAttr(lombfile, groupname, "lvmax", &rprm->lvmax);
-    
-    // copy pulse and lag vectors?
-    //LombFitReadAttr(lombfile, groupname, "", &rprm->pulse);
-    //LombFitReadAttr(lombfile, groupname, "", &rprm->lag);
-    //LombFitReadAttr(lombfile, groupname, "", &rprm->combf);
+
+    // copy pulse and lag vectors
+    int16_t *ltab, *ptab;
+    ltab = LombFitReadVector(recordgroup, "ltab");
+    ptab = LombFitReadVector(recordgroup, "ptab");
+    RadarParmSetPulse(rprm, rprm->mppul, ptab);
+    RadarParmSetLag(rprm, rprm->mplgs, ltab);
 
     // populate fit->rng vectors  
     double *v, *v_err, *p_0, *p_l, *p_l_err, *w_l, *w_l_err, *w_s, *w_s_err, *phi0, *phi0_err, *sdev_l, *sdev_s, *sdev_phi;
@@ -187,11 +204,14 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     int8_t *nump;
     uint16_t nrang = 0;
     uint16_t i;
+    uint16_t lomb_iterations = 0;
     LombFitReadAttr(lombfile, groupname, "nrang", &nrang);
+    LombFitReadAttr(lombfile, groupname, "fitlomb.bayes.iterations", &lomb_iterations);
+    FitSetRng(fit, nrang); 
 
     v = LombFitReadVector(recordgroup, "v");
     v_err = LombFitReadVector(recordgroup, "v_e");
-    p_0 = LombFitReadVector(recordgroup, "pwr0");
+    p_0 = NULL;
     p_l = LombFitReadVector(recordgroup, "p_l");
     p_l_err = LombFitReadVector(recordgroup, "p_l_e");
     w_l = LombFitReadVector(recordgroup, "w_l");
@@ -207,31 +227,34 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     qflg = LombFitReadVector(recordgroup, "qflg");
     gsct =  NULL; // not produced by fitlomb
     nump = NULL; // not produced by fitlomb
+    
+    for(i = 0; i < nrang; i ++) {
+        // calculate index into 2d array to pull the first iteration at a range (nrang by number of lomb iterations) 
+        uint32_t idx = lomb_iterations * i;
 
-    for(i = 0; i < nrang; i++) {
+        // copy over first first fit (ignore later iterations)
         // doubles
-        fit->rng[i].v = v[i];
-        fit->rng[i].v_err = v_err[i];
-        fit->rng[i].p_0 = p_0[i];
-        fit->rng[i].p_l = p_l[i];
-        fit->rng[i].p_l_err = p_l_err[i];
-        fit->rng[i].w_l = w_l[i];
-        fit->rng[i].w_l_err = w_l_err[i];
-        fit->rng[i].w_s = w_s[i];
-        fit->rng[i].w_s_err = w_s_err[i];
-        fit->rng[i].sdev_l = sdev_l[i];
-        fit->rng[i].sdev_s = sdev_s[i];
+        fit->rng[i].v = v[idx];
+        fit->rng[i].v_err = v_err[idx];
+        fit->rng[i].p_l = p_l[idx];
+        fit->rng[i].p_l_err = p_l_err[idx];
+        fit->rng[i].w_l = w_l[idx];
+        fit->rng[i].w_l_err = w_l_err[idx];
+        fit->rng[i].w_s = w_s[idx];
+        fit->rng[i].w_s_err = w_s_err[idx];
+        fit->rng[i].sdev_l = sdev_l[idx];
+        fit->rng[i].sdev_s = sdev_s[idx];
 
         // int32
-        fit->rng[i].qflg = qflg[i];
+        fit->rng[i].qflg = qflg[idx];
 
         // set unsupported parameters to -1
+        fit->rng[i].p_0 = -1;
         fit->rng[i].phi0 = -1;
         fit->rng[i].phi0_err = -1; 
         fit->rng[i].sdev_phi = -1;
         fit->rng[i].gsct = -1;
         fit->rng[i].nump = -1;
-
     }
     
     // ignore elevation for now..
@@ -250,10 +273,12 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     free(sdev_l);
     free(sdev_s);
     free(qflg);
+    free(ltab);
+    free(ptab);
 
     lombfile->pulseidx++;
     lombfile->status = H5Gclose(recordgroup);
-    return 0;
+    return 1;
 }
 
 /* iterate through records, get as close possible going over */
@@ -281,13 +306,11 @@ int LombFitSeek(struct LombFile *lombfile, int yr,int mo,int dy,int hr,int mt,in
     for(i = 0; i < lombfile->npulses; i++) {
         char *groupname;
         ssize_t groupnamesize;
-        hid_t recordgroup;
 
         // get name of next record (get name size, allocate space, grab name)
         groupnamesize = 1 + H5Lget_name_by_idx (lombfile->root_group, ".", H5_INDEX_NAME, H5_ITER_INC, i, NULL, 0, H5P_DEFAULT);
         groupname = (char *) malloc (groupnamesize);
         groupnamesize = H5Lget_name_by_idx (lombfile->root_group, ".", H5_INDEX_NAME, H5_ITER_INC, i, groupname, (size_t) groupnamesize, H5P_DEFAULT);
-        recordgroup = H5Gopen(lombfile->file_id, groupname, H5P_DEFAULT);
         
         // read off record time
         LombFitReadAttr(lombfile, groupname, "epoch.time", &recordtime);
@@ -303,6 +326,8 @@ int LombFitSeek(struct LombFile *lombfile, int yr,int mo,int dy,int hr,int mt,in
         }
                     
     }
+
+    return lombfile->pulseidx;
 
 }
 
@@ -406,6 +431,71 @@ int RadarParmSetCombf(struct RadarParm *ptr,char *str) {
   return 0;
 }
 
+int RadarParmSetOriginTime(struct RadarParm *ptr,char *str) {
+  char *tmp=NULL;
+  if (ptr==NULL) return -1;
+
+  if (str==NULL) {
+    if (ptr->origin.time !=NULL) free(ptr->origin.time);
+    ptr->origin.time=NULL;
+    return 0;
+  }
+
+  if (ptr->origin.time==NULL) tmp=malloc(strlen(str)+1);
+  else tmp=realloc(ptr->origin.time,strlen(str)+1);
+
+  if (tmp==NULL) return -1;
+  strcpy(tmp,str);
+  ptr->origin.time=tmp;
+  return 0;
+
+}
+int RadarParmSetPulse(struct RadarParm *ptr,int mppul,int16 *pulse) {
+  void *tmp=NULL;
+  if (ptr==NULL) return -1;
+
+  if ((mppul==0) || (pulse==NULL)) {
+    if (ptr->pulse !=NULL) free(ptr->pulse);
+    ptr->pulse=NULL;
+    ptr->mppul=0;
+    return 0;
+  }
+
+  if (ptr->pulse==NULL) tmp=malloc(sizeof(int16)*mppul);
+  else tmp=realloc(ptr->pulse,sizeof(int16)*mppul);
+
+  if (tmp==NULL) return -1;
+  memcpy(tmp,pulse,sizeof(int16)*mppul);
+  ptr->pulse=tmp;
+  ptr->mppul=mppul;
+  return 0;
+}
+
+int RadarParmSetLag(struct RadarParm *ptr,int mplgs,int16 *lag) {
+  int n,x;
+  void *tmp=NULL;
+  if (ptr==NULL) return -1;
+
+  if ((mplgs==0) || (lag==NULL)) {
+    for (n=0;n<2;n++) {
+      if (ptr->lag[n] !=NULL) free(ptr->lag[n]);
+      ptr->lag[n]=NULL;
+    }
+    return 0;
+  }
+
+  for (n=0;n<2;n++) {
+    if (ptr->lag[n]==NULL) tmp=malloc(sizeof(int16)*(mplgs+1));
+    else tmp=realloc(ptr->lag[n],sizeof(int16)*(mplgs+1));
+    if (tmp==NULL) return -1;
+    ptr->lag[n]=tmp;
+    for (x=0;x<=mplgs;x++) ptr->lag[n][x]=lag[2*x+n];
+  }
+  return 0;
+}
+
+
+
 void RadarParmFree(struct RadarParm *ptr) {
   if (ptr==NULL) return;
   if (ptr->origin.time !=NULL) free(ptr->origin.time);
@@ -424,18 +514,27 @@ int main(void)
     struct RadarParm *prm;
     struct FitData *fit;
     double atme;
-
+    
+    // create fit and prm structs, open lombfit file
     fit = FitMake();
     prm = RadarParmMake();
- 
-    FitSetRng(fit, 75); // TODO: set without hardcoding..
-
     LombFitOpen(&lombfile, FILE);
+    
+    // read the first record
     LombFitRead(&lombfile, prm, fit);
+
+    // seek to a time, then read the record at that time
     LombFitSeek(&lombfile, 2014,2,26,1,20,27, &atme);
     LombFitRead(&lombfile, prm, fit);
-    LombFitClose(&lombfile);
     
+    // read off remaining records..
+    while(LombFitRead(&lombfile, prm, fit)) {
+        printf(".");
+    }
+    printf("\n");
+
+    // clean up..
+    LombFitClose(&lombfile);
     RadarParmFree(prm);
     FitFree(fit);
     return 0;

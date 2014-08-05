@@ -1,0 +1,2 @@
+h5cc -O1 fitlombread.c -o fitlombread -g -I/home/kleinjt/repos/rst/include/superdarn/ -Wall
+rm *.o
