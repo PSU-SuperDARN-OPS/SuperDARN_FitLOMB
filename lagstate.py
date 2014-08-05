@@ -9,8 +9,8 @@ def good_lags(prm,pwr0):
   psamples=[]
   smpoff=prm.lagfr/prm.smsep
   for pulse in prm.ptab:
-       t1 =pulse *prm.mpinc-prm.txpl/2.
-       t2 = t1 + 3*prm.txpl/2. + 100 
+       t1 = pulse * prm.mpinc-prm.txpl/2.
+       t2 = t1 + 3 * prm.txpl/2. + 100 
        ptimes_usec.append([t1,t2])
        psamples.append([int(t1/prm.smsep),int(t2/prm.smsep)])
 

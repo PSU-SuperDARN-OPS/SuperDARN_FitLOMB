@@ -9,7 +9,6 @@
 # TODO: look at variance of residual, compare with fitacf
 # TODO: convert to work with davitpy
 # TODO: add generalized timecube generation
-# TODO: generate slist
 # TODO: generate pwr0
 
 import argparse
@@ -46,44 +45,66 @@ C = 3e8
 CALC_SIGMA = True 
 KEEP_SAMPLES = False 
 
-BEAM_ATTRS = ['radar.revision.major', 'radar.revision.minor',\
-        'origin.command', 'cp', 'stid', \
-        'rawacf.revision.major', 'rawacf.revision.minor']
-        
-
-GROUP_ATTRS = [\
-        'txpow', 'nave', 'atten', 'lagfr', 'smsep', 'ercod', 'stat.agc', 'stat.lopwr', \
-        'noise.search', 'noise.mean', 'channel', 'bmnum', 'bmazm', 'scan', 'offset', 'rxrise',\
-        'tfreq', 'mxpwr', 'lvmax', 'combf',\
-        'intt.sc', 'intt.us', 'txpl', 'mpinc', 'mppul', 'mplgs', 'nrang', 'frang', 'rsep', 'xcf']
-
-GROUP_ATTR_TYPES = [\
-        np.int16, np.int16, np.int16, np.int16, np.int16, np.int16, np.int16, np.int16,\
-        np.float32, np.float32, np.int16, np.int16, np.float32, np.int16, np.int16, np.int16,\
-        np.int16, np.int32, np.int32, str,\
-        np.int16, np.int32, np.int16, np.int16, np.int16, np.int16, np.int16, np.int16, np.int16, np.int8]
-        
+GROUP_ATTR_TYPES = {\
+        'txpow':np.int16,\
+        'nave':np.int16,\
+        'atten':np.int16,\
+        'lagfr':np.int16,\
+        'smsep':np.int16,\
+        'ercod':np.int16,\
+        'stat.agc':np.int16,\
+        'stat.lopwr':np.int16,\
+        'noise.search':np.float32,\
+        'noisesky':np.float32,\
+        'noisesearch':np.float32,\
+        'noise.mean':np.float32,\
+        'noisemean':np.float32,\
+        'channel':np.int16,\
+        'bmnum':np.int16,\
+        'bmazm':np.float32,\
+        'scan':np.int16,\
+        'offset':np.int16,\
+        'rxrise':np.int16,\
+        'tfreq':np.int16,\
+        'mxpwr':np.int32,\
+        'lvmax':np.int32,\
+        'combf':str,\
+        'intt.sc':np.int16,\
+        'inttsc':np.int16,\
+        'intt.us':np.int32,\
+        'inttus':np.int32,\
+        'txpl':np.int16,\
+        'mpinc':np.int16,\
+        'mppul':np.int16,\
+        'mplgs':np.int16,\
+        'mplgexs':np.int16,\
+        'nrang':np.int16,\
+        'frang':np.int16,\
+        'rsep':np.int16,\
+        'ptab':np.int16,\
+        'ltab':np.int16,\
+        'ifmode':np.int16,\
+        'xcf':np.int8}
 
 class LombFit:
     def __init__(self, record):
-        self.rawacf = record.recordDict # dictionary copy of RawACF record
-        self.mplgs = self.rawacf['mplgs'] # range of lags
-        self.ranges = range(self.rawacf['nrang']) # range gates
-        self.nrang = self.rawacf['nrang'] # range gates
-        self.ptab = self.rawacf['ptab'] # (mppul length list): pulse table
-        self.mppul = self.rawacf['mppul'] # number of pulses in sequence
-        self.ltab = self.rawacf['ltab'] # (mplgs x 2 length list): lag table
-        self.lagfr = self.rawacf['lagfr'] # lag to first range in us
-        self.mpinc = self.rawacf['mpinc'] # multi pulse increment (tau, basic lag time) 
-        self.smsep = self.rawacf['smsep'] # sample separation in us
-        self.txpl = self.rawacf['txpl'] # sample separation in us
-        self.rsep = self.rawacf['rsep'] # range gate separation in km
-        self.acfi = self.rawacf['acfd'][I_OFFSET::2]
-        self.acfq = self.rawacf['acfd'][Q_OFFSET::2]
-        self.slist = self.rawacf['slist'] 
-        self.tfreq = self.rawacf['tfreq'] # transmit frequency (kHz)
-        self.bmnum = self.rawacf['bmnum'] # beam number
-        self.pwr0 = self.rawacf['pwr0'] # pwr0
+        self.rawacf = record # dictionary copy of RawACF record
+        self.mplgs = self.rawacf.prm.mplgs # range of lags
+        self.ranges = range(self.rawacf.prm.nrang) # range gates
+        self.nrang = self.rawacf.prm.nrang # range gates
+        self.ptab = self.rawacf.prm.ptab # (mppul length list): pulse table
+        self.ltab = self.rawacf.prm.ltab # (mplgs x 2 length list): lag table
+        self.lagfr = self.rawacf.prm.lagfr # lag to first range in us
+        self.mpinc = self.rawacf.prm.mpinc # multi pulse increment (tau, basic lag time) 
+        self.txpl = self.rawacf.prm.txpl # 
+        self.mppul = self.rawacf.prm.mppul # 
+        self.smsep = self.rawacf.prm.smsep 
+        acfd = np.array(record.rawacf.acfd)
+        self.acfi = acfd[:,:,I_OFFSET]
+        self.acfq = acfd[:,:,Q_OFFSET]
+        self.tfreq = self.rawacf.prm.tfreq # transmit frequency (kHz)
+        self.bmnum = self.rawacf.bmnum # beam number
+        self.pwr0 = self.rawacf.fit.pwr0 # pwr0
         self.recordtime = record.time 
         
         # calculate max decay rate for MAX_W spectral width
@@ -162,11 +183,18 @@ class LombFit:
     def WriteLSSFit(self, hdf5file):
         groupname = str(calendar.timegm(self.recordtime.timetuple()))
         grp = hdf5file.create_group(groupname)
-               
         # add scalars as attributes to group
-        for (i,attr) in enumerate(GROUP_ATTRS):
-            grp.attrs[attr] = GROUP_ATTR_TYPES[i](self.rawacf[attr])
-        
+        for attr in self.rawacf.prm.__dict__.keys():
+            grp.attrs[attr] = GROUP_ATTR_TYPES[attr](self.rawacf.prm.__dict__[attr])
+
+        # add scalars with changed names on davitpy..
+        grp.attrs['noise.search'] = np.float32(self.rawacf.prm.noisesearch)
+        grp.attrs['noise.mean'] = np.float32(self.rawacf.prm.noisemean)
+        grp.attrs['intt.sc'] = np.int16(self.rawacf.prm.inttsc)
+        grp.attrs['intt.us'] = np.int32(self.rawacf.prm.inttus)
+        grp.attrs['channel'] = np.int16(ord(self.rawacf.channel) - ord('a'))
+        grp.attrs['bmnum'] = np.int16(self.rawacf.bmnum)
+
         # add times..
         grp.attrs['time.yr'] = np.int16(self.recordtime.year)
         grp.attrs['time.mo'] = np.int16(self.recordtime.month) 
@@ -182,23 +210,17 @@ class LombFit:
         grp.attrs['fitlomb.bayes.iterations'] = np.int16(self.maxfreqs)
         grp.attrs['origin.code'] = ORIGIN_CODE # TODO: ADD ARGUEMENTS
         grp.attrs['origin.time'] = str(datetime.datetime.now())
-
-        if self.rawacf['origin.code'] != '\x00':
-            grp.attrs['rawacf.origin.code'] = self.rawacf['origin.code']
-        grp.attrs['rawacf.origin.time'] = self.rawacf['origin.time']
-
-        for gattr in BEAM_ATTRS:
-            if self.rawacf[gattr] != '\x00':
-                grp.attrs[gattr] = self.rawacf[gattr]
+        
+        grp.attrs['stid'] = np.int16(self.rawacf.stid)
+        grp.attrs['cp'] = np.int16(self.rawacf.cp)
         
         grp.attrs['epoch.time'] = calendar.timegm(self.recordtime.timetuple())
         grp.attrs['noise.lag0'] = np.float64(self.noise) # lag zero power from noise acf?
         
         # copy over vectors from rawacf
-        add_compact_dset(hdf5file, groupname, 'ptab', np.int16(self.rawacf['ptab']), h5py.h5t.STD_I16BE)
-        add_compact_dset(hdf5file, groupname, 'ltab', np.int16(self.rawacf['ltab']), h5py.h5t.STD_I16BE)
-        add_compact_dset(hdf5file, groupname, 'slist', np.int16(self.rawacf['slist']), h5py.h5t.STD_I16BE)
-        add_compact_dset(hdf5file, groupname, 'pwr0', np.int32(self.rawacf['pwr0']), h5py.h5t.STD_I32BE)
+        add_compact_dset(hdf5file, groupname, 'ptab', np.int16(self.ptab), h5py.h5t.STD_I16BE)
+        add_compact_dset(hdf5file, groupname, 'ltab', np.int16(self.ltab), h5py.h5t.STD_I16BE)
+        add_compact_dset(hdf5file, groupname, 'pwr0', np.int32(self.pwr0), h5py.h5t.STD_I32BE)
         
         # add calculated parameters
         add_compact_dset(hdf5file, groupname, 'qflg', np.int32(self.qflg), h5py.h5t.STD_I32BE)
@@ -229,10 +251,6 @@ class LombFit:
             add_compact_dset(hdf5file, groupname, 'fit_snr_s', np.float64(self.fit_snr_s), h5py.h5t.NATIVE_DOUBLE)
             add_compact_dset(hdf5file, groupname, 'r2_phase_s', np.float64(self.r2_phase_s), h5py.h5t.NATIVE_DOUBLE)
         
-        if KEEP_SAMPLES:
-            grp.create_dataset('acfi', data = self.acfi)
-            grp.create_dataset('acfq', data = self.acfq)
-
     # calculates FitACF-like parameters for each peak in the spectrum
     # processes the pulse (move it __init__)?
     def ProcessPulse(self, cubecache):
@@ -268,14 +286,13 @@ class LombFit:
         fitacf = fitacfs[self.recordtime]
 
         w_fitacf.append(np.array(fitacf['w_l']))
-        w_lomb = self.w_l #.append(np.array([fitlomb.w_l[:,0][s] for s in self.slist]))
+        w_lomb = self.w_l 
 
         v_fitacf.append(np.array(fitacf['v']))
-        v_lomb = self.v_l #.append(np.array([fitlomb.v_l[:,0][s] for s in self.slist]))
+        v_lomb = self.v_l
 
-        # NOTE: fitacf uses log power?.. scale 10 * log10
         p_fitacf.append(np.array(fitacf['p_l']))
-        p_lomb = self.p_l #.append(10 * np.log10(np.array([fitlomb.p_l[:,0][s] for s in self.slist])))
+        p_lomb = self.p_l
 
         for (i,s) in enumerate(fitacf['slist']):
             # scatter plot samples, subplot, make stuff bigger.
@@ -340,14 +357,14 @@ class LombFit:
         offset = self.mplgs * rgate
 
         # see http://davit.ece.vt.edu/davitpy/_modules/pydarn/sdio/radDataTypes.html
-        i_lags = np.array(self.acfi[offset:offset+self.mplgs])
-        q_lags = np.array(self.acfq[offset:offset+self.mplgs])
+        i_lags = self.acfi[rgate]
+        q_lags = self.acfq[rgate]
         
         good_lags = np.ones(self.mplgs)
         good_lags[self.bad_lags[rgate] != 0] = 0
 
         lags = map(lambda x : abs(x[1]-x[0]), self.ltab[0:self.mplgs])
-
+        
         i_lags = i_lags[good_lags == True]
         q_lags = q_lags[good_lags == True]
 
@@ -475,7 +492,7 @@ class LombFit:
 
     def CalcNoise(self):
         # take average of smallest ten powers at range gate 0 for lower bound on noise
-        pnmin = np.mean(sorted(self.rawacf['pwr0'])[:10])
+        pnmin = np.mean(sorted(self.pwr0)[:10])
         self.noise = pnmin
 
         # take 1.6 * pnmin as upper bound for noise, 
@@ -484,7 +501,7 @@ class LombFit:
         noise_samples = np.array([])
 
         # look through good lags for ranges with pnmin, pnmax for more noise samples
-        noise_ranges = (self.rawacf['pwr0'] > pnmin) * (self.rawacf['pwr0'] < pnmax)
+        noise_ranges = (self.pwr0 > pnmin) * (self.pwr0 < pnmax)
         
         for r in np.nonzero(noise_ranges)[0]:
             t, samples = self._CalcSamples(r)
@@ -508,8 +525,8 @@ class LombFit:
                 # TODO: work on fall back
                 if not bad_lags[rgate][0]: 
                     offset = self.mplgs * rgate
-                    i_lags = np.array(self.acfi[offset:offset+self.mplgs])
-                    q_lags = np.array(self.acfq[offset:offset+self.mplgs])
+                    i_lags = self.acfi[rgate]
+                    q_lags = self.acfq[rgate]
                     samples = i_lags + 1j * q_lags 
                     
                     lagpowers = abs(samples) ** 2
@@ -560,7 +577,7 @@ if __name__ == '__main__':
     args.pulses = int(args.pulses)
 
     # ksr, kod, pgr, ade, cvw 
-    radar_codes = ['mcm.a']# ['ksr.a', 'kod.c', 'kod.d', 'ade.a', 'cve', 'pgr']
+    radar_codes = ['kod.c']# ['ksr.a', 'kod.c', 'kod.d', 'ade.a', 'cve', 'pgr']
     #stimes = [datetime.datetime(2014,2,26), datetime.datetime(2014,2,27), datetime.datetime(2014,3,1), datetime.datetime(2014,3,2), datetime.datetime(2014,3,4), datetime.datetime(2014,3,6)]
     #etimes = [datetime.datetime(2014,2,27), datetime.datetime(2014,2,28), datetime.datetime(2014,3,2), datetime.datetime(2014,3,3), datetime.datetime(2014,3,5), datetime.datetime(2014,3,7)]
 
