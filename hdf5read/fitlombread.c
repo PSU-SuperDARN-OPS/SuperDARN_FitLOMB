@@ -42,7 +42,7 @@ void RadarParmFree(struct RadarParm *ptr);
 int32_t LombFitOpen(struct LombFile *lombfile, char *filename)
 {
     H5G_info_t ginfo;
-
+    lombfile->file_id = -1;
     lombfile->file_id = H5Fopen(FILE, H5F_ACC_RDONLY, H5P_DEFAULT);
     lombfile->root_group = H5Gopen(lombfile->file_id, "/", H5P_DEFAULT);
     lombfile->status = H5Gget_info (lombfile->root_group, &ginfo);
