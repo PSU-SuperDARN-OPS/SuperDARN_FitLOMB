@@ -186,7 +186,8 @@ class LombFit:
         grp = hdf5file.create_group(groupname)
         # add scalars as attributes to group
         for attr in self.rawacf.prm.__dict__.keys():
-            grp.attrs[attr] = GROUP_ATTR_TYPES[attr](self.rawacf.prm.__dict__[attr])
+            if self.rawacf.prm.__dict__[attr] != None:
+                grp.attrs[attr] = GROUP_ATTR_TYPES[attr](self.rawacf.prm.__dict__[attr])
 
         # add scalars with changed names on davitpy..
         grp.attrs['noise.search'] = np.float32(self.rawacf.prm.noisesearch)
@@ -462,10 +463,11 @@ class LombFit:
                     self.fit_snr_s[rgate,i] = fit['fit_snr']
                     self.v_s_std[rgate,i] = ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA)
                     self.v_s_e[rgate,i] = self.v_s_std[rgate,i] / np.sqrt(N)
-
+                self.p_s[self.p_s <= 0] = np.nan 
                 self.p_s = 10 * np.log10(self.p_s)
 
         # scale p_l by 10 * log10 to match fitacf
+        self.p_l[self.p_l <= 0] = np.nan 
         self.p_l = 10 * np.log10(self.p_l)
 
     def PlotPeak(self, rgate):
@@ -572,18 +574,19 @@ if __name__ == '__main__':
     parser.add_argument("--starttime", help="input RawACF file to convert")
     parser.add_argument("--endtime", help="input RawACF file to convert")
     parser.add_argument("--pulses", help="calculate lomb over multiple pulses", default=1) 
-    parser.add_argument("--radar", help="radar to create data from", default='mcm.a') 
+    parser.add_argument("--radar", help="radar to create data from", default='kod.d') 
 
     args = parser.parse_args() 
     args.pulses = int(args.pulses)
 
     # ksr, kod, pgr, ade, cvw 
-    radar_codes = ['ksr.a', 'kod.c', 'kod.d', 'ade.a', 'cve', 'pgr']
-    #stimes = [datetime.datetime(2014,2,26), datetime.datetime(2014,2,27), datetime.datetime(2014,3,1), datetime.datetime(2014,3,2), datetime.datetime(2014,3,4), datetime.datetime(2014,3,6)]
-    #etimes = [datetime.datetime(2014,2,27), datetime.datetime(2014,2,28), datetime.datetime(2014,3,2), datetime.datetime(2014,3,3), datetime.datetime(2014,3,5), datetime.datetime(2014,3,7)]
+    radar_codes = [args.radar]#['ksr.a', 'kod.c', 'kod.d', 'ade.a', 'cve', 'pgr']
+    recordlen = 2
+    days = [datetime.datetime(2014,2,26), datetime.datetime(2014,2,27), datetime.datetime(2014,3,1), datetime.datetime(2014,3,2), datetime.datetime(2014,3,4), datetime.datetime(2014,3,6)]
+    hours = range(0, 24, recordlen) 
 
-    stimes = [datetime.datetime(2014,2,26,1,20)]
-    etimes = [datetime.datetime(2014,2,26,1,22)]
+    #stimes = [datetime.datetime(2014,2,26,1,20)]
+    #etimes = [datetime.datetime(2014,2,26,1,22)]
 
     # boilerplate..
     fileType='rawacf'
@@ -592,24 +595,27 @@ if __name__ == '__main__':
     channel=None
 
     for radar_code in radar_codes:
-        for (i, stime) in enumerate(stimes):
-            myPtr = sdio.radDataOpen(stime,radar_code,eTime=etimes[i],channel=None,bmnum=None,cp=None,fileType=fileType,filtered=filtered, src=src)
-            outfilename = stime.strftime('%Y%m%d.' + radar_code + '.fitlomb.hdf5') 
-            outfilepath = DATA_DIR + stime.strftime('%Y/%m.%d/') 
-            if not os.path.exists(outfilepath):
-                os.makedirs(outfilepath)
-            cubecache = TimeCube()
-            
-            hdf5file = h5py.File(outfilepath + outfilename, 'w')
+        for sday in days:
+            for hoffset in hours:
+                stime = sday + datetime.timedelta(hours = hoffset)
+                etime = sday + datetime.timedelta(hours = (hoffset + recordlen))
+                myPtr = sdio.radDataOpen(stime,radar_code,eTime=etime,channel=None,bmnum=None,cp=None,fileType=fileType,filtered=filtered, src=src)
+                outfilename = stime.strftime('%Y%m%d.%H%M.' + radar_code + '.fitlomb.hdf5') 
+                outfilepath = DATA_DIR + stime.strftime('%Y/%m.%d/') 
+                if not os.path.exists(outfilepath):
+                    os.makedirs(outfilepath)
+                cubecache = TimeCube()
+                
+                hdf5file = h5py.File(outfilepath + outfilename, 'w')
 
-            lombfits = []
-             
-            drec = sdio.radDataReadRec(myPtr)
-
-            while drec != None:
-                fit = LombFit(drec)
-                fit.ProcessPulse(cubecache)
-                fit.WriteLSSFit(hdf5file)
+                lombfits = []
+                 
                 drec = sdio.radDataReadRec(myPtr)
 
-            hdf5file.close() 
+                while drec != None:
+                    fit = LombFit(drec)
+                    fit.ProcessPulse(cubecache)
+                    fit.WriteLSSFit(hdf5file)
+                    drec = sdio.radDataReadRec(myPtr)
+
+                hdf5file.close() 
