@@ -179,14 +179,14 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     LombFitReadAttr(lombfile, groupname, "mpinc", &rprm->mpinc);
     LombFitReadAttr(lombfile, groupname, "mppul", &rprm->mppul);
     LombFitReadAttr(lombfile, groupname, "mplgs", &rprm->mplgs);
-    //LombFitReadAttr(lombfile, groupname, "", &rprm->mplgexs);
+    LombFitReadAttr(lombfile, groupname, "", &rprm->mplgexs);
     LombFitReadAttr(lombfile, groupname, "nrang", &rprm->nrang);
     LombFitReadAttr(lombfile, groupname, "frang", &rprm->frang);
     LombFitReadAttr(lombfile, groupname, "rsep", &rprm->rsep);
-    //LombFitReadAttr(lombfile, groupname, "xc", &rprm->xcf);
+    LombFitReadAttr(lombfile, groupname, "xc", &rprm->xcf);
     LombFitReadAttr(lombfile, groupname, "tfreq", &rprm->tfreq);
     LombFitReadAttr(lombfile, groupname, "offset", &rprm->offset);
-    //LombFitReadAttr(lombfile, groupname, "", &rprm->ifmode);
+    LombFitReadAttr(lombfile, groupname, "", &rprm->ifmode);
 
     LombFitReadAttr(lombfile, groupname, "mxpwr", &rprm->mxpwr);
     LombFitReadAttr(lombfile, groupname, "lvmax", &rprm->lvmax);
@@ -326,9 +326,8 @@ int LombFitSeek(struct LombFile *lombfile, int yr,int mo,int dy,int hr,int mt,in
         }
                     
     }
-
+    
     return lombfile->pulseidx;
-
 }
 
 
