@@ -42,7 +42,6 @@ void RadarParmFree(struct RadarParm *ptr);
 int32_t LombFitOpen(struct LombFile *lombfile, char *filename)
 {
     H5G_info_t ginfo;
-
     lombfile->file_id = H5Fopen(FILE, H5F_ACC_RDONLY, H5P_DEFAULT);
     lombfile->root_group = H5Gopen(lombfile->file_id, "/", H5P_DEFAULT);
     lombfile->status = H5Gget_info (lombfile->root_group, &ginfo);
@@ -183,10 +182,10 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     LombFitReadAttr(lombfile, groupname, "nrang", &rprm->nrang);
     LombFitReadAttr(lombfile, groupname, "frang", &rprm->frang);
     LombFitReadAttr(lombfile, groupname, "rsep", &rprm->rsep);
-    //LombFitReadAttr(lombfile, groupname, "xc", &rprm->xcf);
+    LombFitReadAttr(lombfile, groupname, "xcf", &rprm->xcf);
     LombFitReadAttr(lombfile, groupname, "tfreq", &rprm->tfreq);
     LombFitReadAttr(lombfile, groupname, "offset", &rprm->offset);
-    //LombFitReadAttr(lombfile, groupname, "", &rprm->ifmode);
+    LombFitReadAttr(lombfile, groupname, "ifmode", &rprm->ifmode);
 
     LombFitReadAttr(lombfile, groupname, "mxpwr", &rprm->mxpwr);
     LombFitReadAttr(lombfile, groupname, "lvmax", &rprm->lvmax);
@@ -289,6 +288,7 @@ int LombFitSeek(struct LombFile *lombfile, int yr,int mo,int dy,int hr,int mt,in
     time_t seektime;
     int64_t recordtime;
     uint16_t i;
+    int retval = -1;
 
     t.tm_year = yr - 1900;
     t.tm_mon = mo - 1;  // months are 0 to 11...
@@ -322,13 +322,13 @@ int LombFitSeek(struct LombFile *lombfile, int yr,int mo,int dy,int hr,int mt,in
 
             LombFitReadAttr(lombfile, groupname, "time.us", &time_us);
             *atme = (double) recordtime + ((double) time_us) / 1e6;
+            retval = lombfile->pulseidx;
             break;
         }
                     
     }
-
-    return lombfile->pulseidx;
-
+    
+    return retval; 
 }
 
 
