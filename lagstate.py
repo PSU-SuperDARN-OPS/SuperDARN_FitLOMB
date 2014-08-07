@@ -1,5 +1,4 @@
 import numpy as np
-import pdb
 # TODO: handle case with lag 0 - if lag 0 is bad, use alternate lag zero (if it exists..)
 # (regenerate behavior for rawacf...)
 def good_lags(prm,pwr0):
