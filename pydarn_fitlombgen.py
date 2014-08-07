@@ -7,9 +7,7 @@
 # TODO: look at zooming off fit snr for each iteration
 # TODO: look at residual spread of fitacf and fitlomb to samples
 # TODO: look at variance of residual, compare with fitacf
-# TODO: convert to work with davitpy
 # TODO: add generalized timecube generation
-# TODO: generate pwr0
 
 import argparse
 import pydarn.radar as radar
@@ -30,7 +28,7 @@ import os
 from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes, calc_zoomvar
 
 FITLOMB_REVISION_MAJOR = 1
-FITLOMB_REVISION_MINOR = 1
+FITLOMB_REVISION_MINOR = 2
 ORIGIN_CODE = 'pydarn_fitlombgen.py'
 DATA_DIR = '/mnt/flash/sddata/fitlomb/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
@@ -44,7 +42,6 @@ MAX_W = 1200 # m/s, max spectral width to include in lomb
 C = 3e8
 
 CALC_SIGMA = True 
-KEEP_SAMPLES = False 
 
 GROUP_ATTR_TYPES = {\
         'txpow':np.int16,\
@@ -116,16 +113,16 @@ class LombFit:
         # stepping of frequency on first pass is limited to even integers 
         nyquist = 1 / (2e-6 * self.mpinc)
         fmax = np.ceil(min((MAX_V * 2 * (self.tfreq * 1e3)) / C, nyquist))
-        df = 2 #(VEL_RES * 2.) * (self.tfreq * 1e3) / C
+        df = 6  #(VEL_RES * 2.) * (self.tfreq * 1e3) / C
         fmax += fmax % df
 
-        self.freqs = np.arange(-fmax,fmax, max(2. * fmax / df, df))
+        self.freqs = np.arange(-fmax,fmax, df)
         
         self.maxalf = amax
         da = 1
-        self.maxfreqs = 2
+        self.maxfreqs = 1
         self.alfs = np.arange(0, self.maxalf, da)
-         
+        
         # thresholds on velocity and spectral width for surface scatter flag (m/s)
         self.v_thresh = 30.
         self.w_thresh = 90. # blanchard, 2009
@@ -574,17 +571,15 @@ if __name__ == '__main__':
     parser.add_argument("--starttime", help="input RawACF file to convert")
     parser.add_argument("--endtime", help="input RawACF file to convert")
     parser.add_argument("--pulses", help="calculate lomb over multiple pulses", default=1) 
-    parser.add_argument("--radar", help="radar to create data from", default='kod.d') 
+    parser.add_argument("--radar", help="radar to create data from", default='mcm.a') 
 
     args = parser.parse_args() 
     args.pulses = int(args.pulses)
 
     # ksr, kod, pgr, ade, cvw 
-    radar_codes = [args.radar]#['ksr.a', 'kod.c', 'kod.d', 'ade.a', 'cve', 'pgr']
     recordlen = 2
-    days = [datetime.datetime(2014,2,26), datetime.datetime(2014,2,27), datetime.datetime(2014,3,1), datetime.datetime(2014,3,2), datetime.datetime(2014,3,4), datetime.datetime(2014,3,6)]
+    days = [datetime.datetime(2014,2,27)]#datetime.datetime(2014,2,27), datetime.datetime(2014,3,1), datetime.datetime(2014,3,2), datetime.datetime(2014,3,4), datetime.datetime(2014,3,6)]
     hours = range(0, 24, recordlen) 
-
     #stimes = [datetime.datetime(2014,2,26,1,20)]
     #etimes = [datetime.datetime(2014,2,26,1,22)]
 
@@ -594,7 +589,7 @@ if __name__ == '__main__':
     src='local'
     channel=None
 
-    for radar_code in radar_codes:
+    for radar_code in [args.radar]:
         for sday in days:
             for hoffset in hours:
                 stime = sday + datetime.timedelta(hours = hoffset)
