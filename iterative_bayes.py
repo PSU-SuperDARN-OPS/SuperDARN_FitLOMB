@@ -236,13 +236,7 @@ def calculate_bayes(s, t, f, alfs, env_model, cubecache = False, timecube = Fals
     # use logarithms to avoid underflow (** 20 will drown large probabilities..)
     # about 30% of execution time is spent here
     P_f = np.log10(N * dbar2 - hbar2)  * ((2 - N) / 2.) - np.log10(CS_f)
-    #P_f = ne.evaluate('log10((N * dbar2 - hbar2) ** ((2 - N) / 2.)) - log10(CS_f)') # (it takes a little longer to use numexpr..)
-
-    # don't bother de-logging, we don't use this anyways.
-    #P_f = 10 * pow(10., P_f)
-    #P_f = ((N * dbar2 - hbar2) ** ((2 - N) / 2.)) / C_f # (18) in [4]
-    # P_f /= P_f.sum() # this is probably not valid..
-    
+   
     # see "Nonuniform Sampling: Bandwidth and Aliasing"
     # for <sigma**2>
     # sigma2 = (N * dbar2 - hbar2) / (N - 4.) # ???
