@@ -39,6 +39,7 @@ Q_OFFSET = 1
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 1500 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 1200 # m/s, max spectral width to include in lomb 
+SNR_THRESH = 1 # ratio of power in fitted signal and residual 
 C = 3e8
 
 CALC_SIGMA = True 
@@ -106,7 +107,7 @@ class LombFit:
         self.recordtime = record.time 
         
         # calculate max decay rate for MAX_W spectral width
-        amax = (MAX_W) / (C / (self.tfreq * 1e3))
+        amax = (np.pi * 2 * self.tfreq * 1e3 * MAX_W) / C 
 
         # calculate max frequency either nyquist rate, or calculated off max velocity
         # stepping of alpha on first pass is limited to even integers
@@ -119,7 +120,7 @@ class LombFit:
         self.freqs = np.arange(-fmax,fmax, df)
         
         self.maxalf = amax
-        da = 1
+        da = 6
         self.maxfreqs = 1
         self.alfs = np.arange(0, self.maxalf, da)
         
@@ -128,10 +129,10 @@ class LombFit:
         self.w_thresh = 90. # blanchard, 2009
         
         # threshold on power (snr), spectral width std error m/s, and velocity std error m/s for quality flag
-        self.qwle_thresh = 90
-        self.qvle_thresh = 90
+        self.qwle_thresh = 80
+        self.qvle_thresh = 80
         self.qpwr_thresh = 2
-        
+        self.snr_thresh = SNR_THRESH 
         # thresholds on velocity and spectral width for ionospheric scatter flag (m/s)
         self.wimin_thresh = 100
         self.wimax_thresh = MAX_W - 100
@@ -369,7 +370,6 @@ class LombFit:
 
         t = (np.array(lags) * self.mpinc / 1e6)[good_lags == True]
         samples = i_lags + 1j * q_lags
-        
         return t, samples
 
 
@@ -399,7 +399,6 @@ class LombFit:
                 # see Effects of mixed scatter on SuperDARN convection maps near (1) for spectral width 
                 # see ros.3.6/codebase/superdarn/src.lib/tk/fitacf/src/fit_acf.c and do_fit.c
                 self.w_l[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.tfreq * 1e3)) 
-
                 # approximate alpha error by taking half of range of alphas covered in fwhm
                 # results in standard deviation
                 self.w_l_std[rgate,i] = (((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA)
@@ -437,6 +436,7 @@ class LombFit:
                         self.w_l[rgate, i] < self.wimax_thresh and \
                         self.v_l[rgate, i] < self.vimax_thresh and \
                         self.w_l[rgate, i] > -self.wimax_thresh and \
+                        self.fit_snr_l[rgate, i] > self.snr_thresh and \
                         self.v_l[rgate, i] > -self.vimax_thresh:
                     self.qflg[rgate,i] = 1
                 
@@ -514,7 +514,7 @@ class LombFit:
             self.noise = np.mean(noise_samples)
     
     # calculate and store bad lags
-    def CalcBadlags(self, pwrthresh = 0):
+    def CalcBadlags(self, pwrthresh = True):
         bad_lags = lagstate.bad_lags(self, self.pwr0)
       
         if pwrthresh:
@@ -571,7 +571,7 @@ if __name__ == '__main__':
     parser.add_argument("--starttime", help="input RawACF file to convert")
     parser.add_argument("--endtime", help="input RawACF file to convert")
     parser.add_argument("--pulses", help="calculate lomb over multiple pulses", default=1) 
-    parser.add_argument("--radar", help="radar to create data from", default='mcm.a') 
+    parser.add_argument("--radar", help="radar to create data from", default='kod.c') 
 
     args = parser.parse_args() 
     args.pulses = int(args.pulses)
@@ -580,6 +580,8 @@ if __name__ == '__main__':
     recordlen = 2
     days = [datetime.datetime(2014,2,27)]#datetime.datetime(2014,2,27), datetime.datetime(2014,3,1), datetime.datetime(2014,3,2), datetime.datetime(2014,3,4), datetime.datetime(2014,3,6)]
     hours = range(0, 24, recordlen) 
+    #hours = [0]
+    #recordlen = .1
     #stimes = [datetime.datetime(2014,2,26,1,20)]
     #etimes = [datetime.datetime(2014,2,26,1,22)]
 
