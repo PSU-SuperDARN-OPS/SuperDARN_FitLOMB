@@ -26,7 +26,7 @@ mod = pycuda.compiler.SourceModule("""
 // then, condense down to lag calculations for other stuff
 // assuming...
 // cs_matrix is [freq][alpha][time]
-
+// TODO: check that the ce matrix is stored how I think it is..
 // RI - range * freq * alpha 
 __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float *se_matrix, float *cs_f, float *R_f, float *I_f, double *hbar2, double *P_f, float env_model, uint32_t nsamples, uint32_t nalphas, float dbar2)
 {
@@ -47,7 +47,6 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
         for(t = 0; t < nsamples; t++) {
             uint32_t sample_offset = samplebase + 2*t;
             if(lags[t]) { 
-                // TODO: TRANSPOSE!!
                 R_f[RI_offset + i] +=   samples[sample_offset + REAL] * ce_matrix[CS_offset + t] + \
                                         samples[sample_offset + IMAG] * ce_matrix[CS_offset + t];
                 I_f[RI_offset + i] +=   samples[sample_offset + REAL] * se_matrix[CS_offset + t] - \
@@ -76,7 +75,6 @@ def calculate_bayes(s, t, f, alfs, env_model, ce_matrix, se_matrix, CS_f):
     hbar2 = ne.evaluate('((R_f ** 2) / CS_f + (I_f ** 2) / CS_f) / 2.')# (19) in [4] 
     
     P_f = np.log10(N * dbar2 - hbar2)  * ((2 - N) / 2.) - np.log10(CS_f)
-
     return R_f, I_f, hbar2, P_f
    
 
@@ -145,7 +143,7 @@ if __name__ == '__main__':
     nsamples = np.int32(len(samples))
     nalphas = np.int32(len(alfs))
     dbar2 = np.float32((sum(np.real(samples) ** 2) + sum(np.imag(samples) ** 2)) / (nsamples))
-    bayes_gpu(samples_gpu, t_gpu, ce_gpu, se_gpu, CS_f_gpu, R_f_gpu, I_f_gpu, hbar2_gpu, P_f_gpu, np.float32(env_model), nsamples, nalphas, dbar2, block = (1,1,1))
+    bayes_gpu(samples_gpu, t_gpu, ce_gpu, se_gpu, CS_f_gpu, R_f_gpu, I_f_gpu, hbar2_gpu, P_f_gpu, np.float32(env_model), nsamples, nalphas, dbar2, block = (int(len(freqs)),1,1))
 
     # copy back data
     cuda.memcpy_dtoh(R_f, R_f_gpu) 
