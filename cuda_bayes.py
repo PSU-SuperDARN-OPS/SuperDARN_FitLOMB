@@ -1,3 +1,4 @@
+#!/usr/bin/python2
 import pycuda.driver as cuda
 import pycuda.gpuarray as gpuarray 
 import pycuda.compiler
@@ -9,7 +10,7 @@ from itertools import chain, izip
 # debugging imports
 import pdb
 import matplotlib.pyplot as plt
-
+import time
 # todo: 
 #       add second moment based error calculations
 
@@ -28,53 +29,47 @@ mod = pycuda.compiler.SourceModule("""
 // cs_matrix is [freq][alpha][time]
 // TODO: check that the ce matrix is stored how I think it is..
 // RI - range * freq * alpha 
+
 __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float *se_matrix, float *cs_f, float *R_f, float *I_f, double *hbar2, double *P_f, float env_model, uint32_t nsamples, uint32_t nalphas, float dbar2)
 {
-    // assume cubecache already exists in memory..
+    // possible optimizations:
+    // - eliminate cs_f freq dependence..
     uint16_t t, i;
+    __shared__ float s_samples[100];
     uint32_t samplebase = blockIdx.x * nsamples * 2; 
     uint32_t RI_offset = (blockIdx.x * blockDim.x * nalphas) + (threadIdx.x * nalphas);
 
-    if(threadIdx.x == 0) {
-        printf(\"RI_offset: %d, \\n\", RI_offset); 
-        printf(\"samplebase: %d, \\n\", samplebase); 
-        printf(\"nfreqs: %d, \\n\", blockDim.x); 
-        printf(\"nalphas: %d, \\n\", nalphas); 
-        printf(\"nsamples: %d, \\n\", nsamples); 
+    // cache samples in shared memory
+    for(i = 0; i < 2 * nsamples / blockDim.x + 1; i++) {
+        uint32_t sample_offset = threadIdx.x + i * blockDim.x;
+        if(sample_offset < nsamples * 2) {
+            s_samples[samplebase + threadIdx.x + i * blockDim.x] = samples[samplebase + threadIdx.x + i * blockDim.x];
+        }
     }
 
     for(i =  0; i < nalphas; i++) {
         uint32_t CS_offset = (threadIdx.x * nalphas * nsamples) + (i * nsamples);
-
-        if(threadIdx.x == 1) {
-            printf(\"thread %d, alpha %d\\n\", threadIdx.x, i);
-            printf(\"CS_offset: %d, \\n\", CS_offset); 
-        }
-
-
         R_f[RI_offset + i] = 0;
         I_f[RI_offset + i] = 0;
-
-        for(t = 0; t < nsamples; t++) {
-            uint32_t sample_offset = samplebase + 2*t;
-            if(threadIdx.x == 0 && i == 0) {
-                //printf(\"sample %d i: %.2f q: %.2f\\n\", t, samples[sample_offset + REAL], samples[sample_offset + IMAG]); 
-                printf(\"sample %d offset %d ce_matrix: %.2f se_matrix: %.2f\\n\", t, CS_offset, ce_matrix[CS_offset + t], se_matrix[CS_offset + t]); 
-                printf(\"lags[%d] = %.2f\\n\", t,lags[t]);
-            }
+        
+        // TODO: if T is a good lag..
     
-            if(t == 0 || lags[t]) { 
-                R_f[RI_offset + i] +=   samples[sample_offset + REAL] * ce_matrix[CS_offset + t] + \
-                                        samples[sample_offset + IMAG] * se_matrix[CS_offset + t];
-                I_f[RI_offset + i] +=   samples[sample_offset + REAL] * se_matrix[CS_offset + t] - \
-                                        samples[sample_offset + IMAG] * ce_matrix[CS_offset + t];
-            }
+        // 90% of time spent on this loop..
+        // sample access is not a big deal..
+        for(t = 0; t < nsamples; t++) {
+            // reorganize memory to access adjacent samples?
+            uint32_t sample_offset = samplebase + 2*t;
+            R_f[RI_offset + i] +=   s_samples[sample_offset + REAL] * ce_matrix[CS_offset + t] + \
+                                    s_samples[sample_offset + IMAG] * se_matrix[CS_offset + t];
+            I_f[RI_offset + i] +=   s_samples[sample_offset + REAL] * se_matrix[CS_offset + t] - \
+                                    s_samples[sample_offset + IMAG] * ce_matrix[CS_offset + t];
         }
 
         hbar2[RI_offset + i] = (pow(R_f[RI_offset + i],2) / cs_f[CS_offset + i] + \
                                 pow(I_f[RI_offset + i],2) / cs_f[CS_offset + i]) / 2;
 
         P_f[RI_offset + i] = log10(nsamples * 2 * dbar2 - hbar2[RI_offset + i]) * (1 - nsamples) - log10(cs_f[CS_offset + i]);
+        
     }
     __syncthreads();
 }
@@ -94,8 +89,10 @@ def calculate_bayes(s, t, f, alfs, env_model, ce_matrix, se_matrix, CS_f):
     P_f = np.log10(N * dbar2 - hbar2)  * ((2 - N) / 2.) - np.log10(CS_f)
     return R_f, I_f, hbar2, P_f
    
-
-if __name__ == '__main__':
+#@profile
+# kernprof -l cuda_bayes.py
+#python -m line_profiler script_to_profile.py.lprof
+def main():
     # prep synthetic data to process
     num_records=1
     fs = 100.
@@ -105,7 +102,7 @@ if __name__ == '__main__':
     amp = [10.]
     alf = [10.]
     env_model = 1
-    lags = np.arange(0, 50) * ts
+    lags = np.arange(0, 20) * ts
     times=[]
     signal=[]
 
@@ -124,8 +121,8 @@ if __name__ == '__main__':
    
     samples=np.float32(list(chain.from_iterable(izip(np.real(signal), np.imag(signal)))))
     times=np.array(np.float32(times))
-    freqs = np.linspace(-fs/2, fs/2, 50)
-    alfs = np.linspace(0,fs/2., 20)
+    freqs = np.linspace(-fs/2, fs/2, 200)
+    alfs = np.linspace(0,fs/2., 60)
     ce_matrix, se_matrix, CS_f = make_spacecube(times, freqs, alfs, env_model)
     # TODO: RESHAPE CE/SE MATRIX FOR FREQ/ALPHA/TIME (swap 2,3?)
     # 50 50 20 (
@@ -157,23 +154,33 @@ if __name__ == '__main__':
     cuda.memcpy_htod(ce_gpu, ce_matrix_g)
     cuda.memcpy_htod(se_gpu, se_matrix_g)
     cuda.memcpy_htod(CS_f_gpu, CS_f_g)
+    gpu_start = time.time()
+    for i in range(100):
+        # run kernel on GPU
+        bayes_gpu = mod.get_function('calc_bayes')
+        nsamples = np.int32(len(samples) / 2)
+        nalphas = np.int32(len(alfs))
+        dbar2 = np.float32((sum(np.real(samples) ** 2) + sum(np.imag(samples) ** 2)) / (nsamples))
+        bayes_gpu(samples_gpu, t_gpu, ce_gpu, se_gpu, CS_f_gpu, R_f_gpu, I_f_gpu, hbar2_gpu, P_f_gpu, np.float32(env_model), nsamples, nalphas, dbar2, block = (int(len(freqs)),1,1))
 
-    # run kernel on GPU
-    bayes_gpu = mod.get_function('calc_bayes')
-    nsamples = np.int32(len(samples) / 2)
-    nalphas = np.int32(len(alfs))
-    dbar2 = np.float32((sum(np.real(samples) ** 2) + sum(np.imag(samples) ** 2)) / (nsamples))
-    bayes_gpu(samples_gpu, t_gpu, ce_gpu, se_gpu, CS_f_gpu, R_f_gpu, I_f_gpu, hbar2_gpu, P_f_gpu, np.float32(env_model), nsamples, nalphas, dbar2, block = (int(len(freqs)),1,1))
+        # copy back data
+        cuda.memcpy_dtoh(R_f, R_f_gpu) 
+        cuda.memcpy_dtoh(I_f, I_f_gpu) 
+        cuda.memcpy_dtoh(hbar2, hbar2_gpu)
+        cuda.memcpy_dtoh(P_f, P_f_gpu)
 
-    # copy back data
-    cuda.memcpy_dtoh(R_f, R_f_gpu) 
-    cuda.memcpy_dtoh(I_f, I_f_gpu) 
-    cuda.memcpy_dtoh(hbar2, hbar2_gpu)
-    cuda.memcpy_dtoh(P_f, P_f_gpu)
+    gpu_end = time.time()
 
-    # run on CPU
-    R_f_cpu, I_f_cpu, hbar2_cpu, P_f_cpu = calculate_bayes(signal, lags, freqs, alfs, env_model, ce_matrix, se_matrix, CS_f)
+    #cpu_start = time.time()
+    #for i in range(10):
+    #    # run on CPU
+    #    R_f_cpu, I_f_cpu, hbar2_cpu, P_f_cpu = calculate_bayes(signal, lags, freqs, alfs, env_model, ce_matrix, se_matrix, CS_f)
 
+    #cpu_end = time.time()
+    print 'gpu: ' + str(gpu_end - gpu_start)
     # compare..
-    import pdb
-    pdb.set_trace()
+
+if __name__ == '__main__':
+    main()
+
+
