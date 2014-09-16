@@ -7,8 +7,8 @@ import numexpr as ne
 from itertools import chain, izip
 
 # debugging imports
-#import pdb
-#import matplotlib.pyplot as plt
+import pdb
+import matplotlib.pyplot as plt
 
 # todo: 
 #       add second moment based error calculations
@@ -35,22 +35,39 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
     uint32_t samplebase = blockIdx.x * nsamples * 2; 
     uint32_t RI_offset = (blockIdx.x * blockDim.x * nalphas) + (threadIdx.x * nalphas);
 
+    if(threadIdx.x == 0) {
+        printf(\"RI_offset: %d, \\n\", RI_offset); 
+        printf(\"samplebase: %d, \\n\", samplebase); 
+        printf(\"nfreqs: %d, \\n\", blockDim.x); 
+        printf(\"nalphas: %d, \\n\", nalphas); 
+        printf(\"nsamples: %d, \\n\", nsamples); 
+    }
+
     for(i =  0; i < nalphas; i++) {
-        /*if(threadIdx.x == 0) {
-            printf("thread %d alpha %d\n", threadIdx.x, i);
-        }*/
-        uint32_t CS_offset = (threadIdx.x * nalphas * nsamples) + (i * nalphas);
+        uint32_t CS_offset = (threadIdx.x * nalphas * nsamples) + (i * nsamples);
+
+        if(threadIdx.x == 1) {
+            printf(\"thread %d, alpha %d\\n\", threadIdx.x, i);
+            printf(\"CS_offset: %d, \\n\", CS_offset); 
+        }
+
 
         R_f[RI_offset + i] = 0;
         I_f[RI_offset + i] = 0;
 
         for(t = 0; t < nsamples; t++) {
             uint32_t sample_offset = samplebase + 2*t;
-            if(lags[t]) { 
+            if(threadIdx.x == 0 && i == 0) {
+                //printf(\"sample %d i: %.2f q: %.2f\\n\", t, samples[sample_offset + REAL], samples[sample_offset + IMAG]); 
+                printf(\"sample %d offset %d ce_matrix: %.2f se_matrix: %.2f\\n\", t, CS_offset, ce_matrix[CS_offset + t], se_matrix[CS_offset + t]); 
+                printf(\"lags[%d] = %.2f\\n\", t,lags[t]);
+            }
+    
+            if(t == 0 || lags[t]) { 
                 R_f[RI_offset + i] +=   samples[sample_offset + REAL] * ce_matrix[CS_offset + t] + \
-                                        samples[sample_offset + IMAG] * ce_matrix[CS_offset + t];
-                I_f[RI_offset + i] +=   samples[sample_offset + REAL] * se_matrix[CS_offset + t] - \
                                         samples[sample_offset + IMAG] * se_matrix[CS_offset + t];
+                I_f[RI_offset + i] +=   samples[sample_offset + REAL] * se_matrix[CS_offset + t] - \
+                                        samples[sample_offset + IMAG] * ce_matrix[CS_offset + t];
             }
         }
 
@@ -110,8 +127,11 @@ if __name__ == '__main__':
     freqs = np.linspace(-fs/2, fs/2, 50)
     alfs = np.linspace(0,fs/2., 20)
     ce_matrix, se_matrix, CS_f = make_spacecube(times, freqs, alfs, env_model)
-    ce_matrix = np.float32(ce_matrix)
-    se_matrix = np.float32(se_matrix)
+    # TODO: RESHAPE CE/SE MATRIX FOR FREQ/ALPHA/TIME (swap 2,3?)
+    # 50 50 20 (
+    ce_matrix_g = np.float32(np.swapaxes(ce_matrix,1,2)).flatten()
+    se_matrix_g = np.float32(np.swapaxes(se_matrix,1,2)).flatten()
+    CS_f_g = np.float32(np.swapaxes(CS_f,0,1).flatten())
     CS_f = np.float32(CS_f)
 
     R_f = np.float32(np.zeros([len(freqs), len(alfs)]))
@@ -122,8 +142,8 @@ if __name__ == '__main__':
     # allocate space on GPU 
     samples_gpu = cuda.mem_alloc(samples.nbytes)
     t_gpu = cuda.mem_alloc(times.nbytes)
-    ce_gpu = cuda.mem_alloc(ce_matrix.nbytes)
-    se_gpu = cuda.mem_alloc(se_matrix.nbytes)
+    ce_gpu = cuda.mem_alloc(ce_matrix_g.nbytes)
+    se_gpu = cuda.mem_alloc(se_matrix_g.nbytes)
     CS_f_gpu = cuda.mem_alloc(CS_f.nbytes)
     R_f_gpu = cuda.mem_alloc(CS_f.nbytes)
     I_f_gpu = cuda.mem_alloc(CS_f.nbytes)
@@ -134,13 +154,13 @@ if __name__ == '__main__':
     cuda.memcpy_htod(samples_gpu, samples)
     cuda.memcpy_htod(t_gpu, times)
 
-    cuda.memcpy_htod(ce_gpu, ce_matrix.flatten())
-    cuda.memcpy_htod(se_gpu, se_matrix.flatten())
-    cuda.memcpy_htod(CS_f_gpu, CS_f)
+    cuda.memcpy_htod(ce_gpu, ce_matrix_g)
+    cuda.memcpy_htod(se_gpu, se_matrix_g)
+    cuda.memcpy_htod(CS_f_gpu, CS_f_g)
 
     # run kernel on GPU
     bayes_gpu = mod.get_function('calc_bayes')
-    nsamples = np.int32(len(samples))
+    nsamples = np.int32(len(samples) / 2)
     nalphas = np.int32(len(alfs))
     dbar2 = np.float32((sum(np.real(samples) ** 2) + sum(np.imag(samples) ** 2)) / (nsamples))
     bayes_gpu(samples_gpu, t_gpu, ce_gpu, se_gpu, CS_f_gpu, R_f_gpu, I_f_gpu, hbar2_gpu, P_f_gpu, np.float32(env_model), nsamples, nalphas, dbar2, block = (int(len(freqs)),1,1))
