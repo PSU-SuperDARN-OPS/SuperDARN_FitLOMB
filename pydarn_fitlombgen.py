@@ -1,6 +1,5 @@
 # jon klein, jtklein@alaska.
 # functions to calculate a fitlomb (generalized lomb-scargle peridogram) from a rawacf
-# parallized with python pp, possible to parallelize over the network
 # mit license
 
 # TODO: move raw data to ARSC, process on their machines
@@ -10,18 +9,15 @@
 # TODO: add generalized timecube generation
 
 import argparse
-import pydarn.radar as radar
 import pydarn.sdio as sdio
 
 from timecube import TimeCube, make_spacecube
 
 import datetime, calendar
 import numpy as np
-import matplotlib.pyplot as plt
 import matplotlib.dates as dates
 import h5py
 import lagstate
-import pp
 import pdb
 import os
 
@@ -30,7 +26,7 @@ from iterative_bayes import iterative_bayes, find_fwhm, calculate_bayes, calc_zo
 FITLOMB_REVISION_MAJOR = 1
 FITLOMB_REVISION_MINOR = 2
 ORIGIN_CODE = 'pydarn_fitlombgen.py'
-DATA_DIR = '/mnt/flash/sddata/fitlomb/'
+DATA_DIR = '~/tmpdata'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
 
 I_OFFSET = 0
@@ -532,6 +528,7 @@ class LombFit:
                     lagpowers = abs(samples) ** 2
 
                     bad_lags[rgate] += (lagpowers > (lagpowers[0] * 2.0))# add interference lags
+		    self.nlag[rgate] = len(bad_lags[rgate]) - sum(bad_lags[rgate])
                 else:
                     # if lag zero is bad, we can't filter out lags greater than lag zero because we don't know what it is..
                     pass 
@@ -578,12 +575,9 @@ if __name__ == '__main__':
 
     # ksr, kod, pgr, ade, cvw 
     recordlen = 2
-    days = [datetime.datetime(2014,2,27)]#datetime.datetime(2014,2,27), datetime.datetime(2014,3,1), datetime.datetime(2014,3,2), datetime.datetime(2014,3,4), datetime.datetime(2014,3,6)]
+    #days = [datetime.datetime(2014,3,1), datetime.datetime(2014,3,2), datetime.datetime(2014,3,4), datetime.datetime(2014,3,6)]
+    days = [datetime.datetime(2014,8,27)]
     hours = range(0, 24, recordlen) 
-    #hours = [0]
-    #recordlen = .1
-    #stimes = [datetime.datetime(2014,2,26,1,20)]
-    #etimes = [datetime.datetime(2014,2,26,1,22)]
 
     # boilerplate..
     fileType='rawacf'
@@ -592,27 +586,38 @@ if __name__ == '__main__':
     channel=None
 
     for radar_code in [args.radar]:
-        for sday in days:
-            for hoffset in hours:
-                stime = sday + datetime.timedelta(hours = hoffset)
-                etime = sday + datetime.timedelta(hours = (hoffset + recordlen))
-                myPtr = sdio.radDataOpen(stime,radar_code,eTime=etime,channel=None,bmnum=None,cp=None,fileType=fileType,filtered=filtered, src=src)
-                outfilename = stime.strftime('%Y%m%d.%H%M.' + radar_code + '.fitlomb.hdf5') 
-                outfilepath = DATA_DIR + stime.strftime('%Y/%m.%d/') 
-                if not os.path.exists(outfilepath):
-                    os.makedirs(outfilepath)
-                cubecache = TimeCube()
-                
-                hdf5file = h5py.File(outfilepath + outfilename, 'w')
+        try:
+		for sday in days:
+		    for hoffset in hours:
+			try:
+				stime = sday + datetime.timedelta(hours = hoffset)
+				etime = sday + datetime.timedelta(hours = (hoffset + recordlen))
+				myPtr = sdio.radDataOpen(stime,radar_code,eTime=etime,channel=None,bmnum=None,cp=None,fileType=fileType,filtered=filtered, src=src)
+				outfilename = stime.strftime('%Y%m%d.%H%M.' + radar_code + '.fitlomb.hdf5') 
+				outfilepath = DATA_DIR + stime.strftime('%Y/%m.%d/') 
+				if not os.path.exists(outfilepath):
+				    os.makedirs(outfilepath)
+				cubecache = TimeCube()
+				
+				hdf5file = h5py.File(outfilepath + outfilename, 'w')
 
-                lombfits = []
-                 
-                drec = sdio.radDataReadRec(myPtr)
+				lombfits = []
+				 
+				drec = sdio.radDataReadRec(myPtr)
 
-                while drec != None:
-                    fit = LombFit(drec)
-                    fit.ProcessPulse(cubecache)
-                    fit.WriteLSSFit(hdf5file)
-                    drec = sdio.radDataReadRec(myPtr)
+				while drec != None:
+				    try:
+					fit = LombFit(drec)
+					fit.ProcessPulse(cubecache)
+					fit.WriteLSSFit(hdf5file)
+				    except:
+					print 'error fitting file, skipping record..'
 
-                hdf5file.close() 
+				    drec = sdio.radDataReadRec(myPtr)
+
+				hdf5file.close() 
+
+			except:
+				print 'error ofitting block'
+        except:
+            print 'day failed..'
