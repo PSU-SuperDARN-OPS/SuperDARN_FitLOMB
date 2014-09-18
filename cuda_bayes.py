@@ -24,6 +24,7 @@ mod = pycuda.compiler.SourceModule("""
 #define MAX_NRANG 300
 #define MAX_SAMPLES 30
 #define MAX_ALPHAS 64
+
 __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float *se_matrix, float *cs_f, float *R_f, float *I_f, double *hbar2, double *P_f, float env_model, uint32_t nsamples, uint32_t nalphas)
 {
     // possible optimizations:
@@ -54,15 +55,12 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
     }
     
     __syncthreads(); 
-    // calculate dbar on thread zero.. (or do on CPU?, takes about 1% of time))
-    if(threadIdx.x == 0) {
-        for(i = 0; i < 2*nsamples; i+=2) {
-            dbar2 += pow(s_samples[i + REAL],2) + pow(s_samples[i + IMAG],2);
-        }
-        dbar2 /= 2 * nsamples;
+    for(i = 0; i < 2*nsamples; i+=2) {
+        dbar2 += pow(s_samples[i + REAL],2) + pow(s_samples[i + IMAG],2);
     }
-    __syncthreads();  // probably not *needed*..
+    dbar2 /= 2 * nsamples;
 
+    __syncthreads(); 
 
     // RI[pulse][alpha][freq]
     // CS[alpha][time][freq]
@@ -82,13 +80,13 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
                                 s_samples[sample_offset + IMAG] * ce_matrix[CS_offset];
         }
 
-        // ~20% of time
         hbar2[RI_offset] = (pow(R_f[RI_offset],2) / s_cs_f[i] + \
                             pow(I_f[RI_offset],2) / s_cs_f[i]) / 2;
-
+        
         P_f[RI_offset] = log10(nsamples * 2 * dbar2 - hbar2[RI_offset]) * (1 - ((int32_t) nsamples)) - log10(s_cs_f[i]);
     }
 }
+
 // P_f is [pulse][alpha][freq]
 // thread for each freq, block across pulses
 // TODO: currently assumes a power of 2 number of freqs 
@@ -195,7 +193,7 @@ def main():
     lags = np.arange(0, 25) * ts
     times=[]
     signal=[]
-    CUDA_GRID = 100
+    CUDA_GRID = 1
 
     for i in xrange(num_records):
       F=f[0]+0.1*np.random.randn()+float(i-num_records/2)/float(num_records)*.1*f[0]
@@ -211,16 +209,15 @@ def main():
         signal.append(sig)
    
     samples=np.tile(np.float32(list(chain.from_iterable(izip(np.real(signal), np.imag(signal))))), CUDA_GRID)
-    freqs = np.linspace(-fs/2, fs/2, 100)
-    freqs = np.linspace(0, fs/2, 128)
+    freqs = np.linspace(-fs/2, fs/2, 128)
+    #freqs = np.linspace(0, fs/2, 128)
     alfs = np.linspace(0,fs/2., 64)
 
     times=np.array(np.float32(times))
     ce_matrix_cpu, se_matrix_cpu, CS_f_cpu = make_spacecube(times, freqs, alfs, env_model)
     times=np.tile(np.array(np.float32(times)), CUDA_GRID)
     ce_matrix, se_matrix, CS_f = make_spacecube(times, freqs, alfs, env_model)
-    # TODO: RESHAPE CE/SE MATRIX FOR FREQ/ALPHA/TIME (swap 2,3?)
-    # 50 50 20 (
+  
     ce_matrix_g = np.float32(np.swapaxes(ce_matrix,0,2)).flatten()
     se_matrix_g = np.float32(np.swapaxes(se_matrix,0,2)).flatten()
     CS_f_g = np.float32(np.swapaxes(CS_f,0,1).flatten())
@@ -271,22 +268,21 @@ def main():
         # run kernel on GPU
         cuda.memcpy_htod(samples_gpu, samples)
         calc_bayes(samples_gpu, t_gpu, ce_gpu, se_gpu, CS_f_gpu, R_f_gpu, I_f_gpu, hbar2_gpu, P_f_gpu, np.float32(env_model), nsamples, nalphas,  block = (int(nfreqs),1,1), grid = (CUDA_GRID,1,1))
-        find_peaks(P_f_gpu, peaks_gpu, nalphas, block = (int(nfreqs),1,1), grid = (CUDA_GRID,1))
-        process_peaks(P_f_gpu, R_f_gpu, I_f_gpu, CS_f_gpu, peaks_gpu, nfreqs, nalphas, alf_fwhm_gpu, freq_fwhm_gpu, amplitudes_gpu, block = (CUDA_GRID,1,1))
+        #find_peaks(P_f_gpu, peaks_gpu, nalphas, block = (int(nfreqs),1,1), grid = (CUDA_GRID,1))
+        #process_peaks(P_f_gpu, R_f_gpu, I_f_gpu, CS_f_gpu, peaks_gpu, nfreqs, nalphas, alf_fwhm_gpu, freq_fwhm_gpu, amplitudes_gpu, block = (CUDA_GRID,1,1))
  
         # copy back data
-        #cuda.memcpy_dtoh(R_f, R_f_gpu) 
-        #cuda.memcpy_dtoh(I_f, I_f_gpu) 
-        #cuda.memcpy_dtoh(hbar2, hbar2_gpu)
+        cuda.memcpy_dtoh(R_f, R_f_gpu) 
+        cuda.memcpy_dtoh(I_f, I_f_gpu) 
+        cuda.memcpy_dtoh(hbar2, hbar2_gpu)
         cuda.memcpy_dtoh(P_f, P_f_gpu)
-        cuda.memcpy_dtoh(amplitudes, amplitudes_gpu)
-        cuda.memcpy_dtoh(alf_fwhm, alf_fwhm_gpu)
-        cuda.memcpy_dtoh(freq_fwhm, freq_fwhm_gpu)
-        cuda.memcpy_dtoh(peaks, peaks_gpu)
+        #cuda.memcpy_dtoh(amplitudes, amplitudes_gpu)
+        #cuda.memcpy_dtoh(alf_fwhm, alf_fwhm_gpu)
+        #cuda.memcpy_dtoh(freq_fwhm, freq_fwhm_gpu)
+        #cuda.memcpy_dtoh(peaks, peaks_gpu)
     
     R_f = R_f[0]
     I_f = I_f[0] 
-
     gpu_end = time.time()
 
     cpu_start = time.time()
