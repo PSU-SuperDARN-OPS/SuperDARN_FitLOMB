@@ -22,16 +22,19 @@ mod = pycuda.compiler.SourceModule("""
 #define REAL 0
 #define IMAG 1
 
-__global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float *se_matrix, float *cs_f, float *R_f, float *I_f, double *hbar2, double *P_f, float env_model, uint32_t nsamples, uint32_t nalphas, float dbar2)
+__global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float *se_matrix, float *cs_f, float *R_f, float *I_f, double *hbar2, double *P_f, float env_model, uint32_t nsamples, uint32_t nalphas)
 {
     // possible optimizations:
     // - eliminate cs_f freq dependence..
     uint32_t t, i, sample_offset;
+    double dbar2 = 0;
+    
+
 
     // cache samples in shared memory
     __shared__ float s_samples[100];
     __shared__ float s_cs_f[100];
-
+    
     uint32_t samplebase = blockIdx.x * nsamples * 2; 
 
     for(i = 0; i < 2 * nsamples / blockDim.x + 1; i++) {
@@ -42,12 +45,23 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
         
         }
     }
+
     // assumes nfreqs > nalphas.. 
     if(threadIdx.x < nalphas) {
         s_cs_f[threadIdx.x] = cs_f[threadIdx.x];
     }
-   
     
+    __syncthreads(); 
+    // calculate dbar on thread zero.. (or do on CPU?, takes about 1% of time))
+    if(threadIdx.x == 0) {
+        for(i = 0; i < 2*nsamples; i+=2) {
+            dbar2 += pow(s_samples[i + REAL],2) + pow(s_samples[i + IMAG],2);
+        }
+        dbar2 /= 2 * nsamples;
+    }
+    __syncthreads();  // probably not *needed*..
+
+
     // RI[pulse][alpha][freq]
     // CS[alpha][time][freq]
     // 90% of time spent on this loop..
@@ -71,11 +85,9 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
         // ~20% of time
         hbar2[RI_offset] = (pow(R_f[RI_offset],2) / s_cs_f[i] + \
                             pow(I_f[RI_offset],2) / s_cs_f[i]) / 2;
-        P_f[RI_offset] = log10(nsamples * 2 * dbar2 - hbar2[RI_offset + i]) * (1 - nsamples) - log10(s_cs_f[i]);
-        
+
+        P_f[RI_offset] = log10(nsamples * 2 * dbar2 - hbar2[RI_offset]) * (1 - ((int32_t) nsamples)) - log10(s_cs_f[i]);
     }
-    __syncthreads();
-    // TODO: reverify samples, verify hbar2/P_f
 }
 """)
 
@@ -84,13 +96,14 @@ def calculate_bayes(s, t, f, alfs, env_model, ce_matrix, se_matrix, CS_f):
     m = 2
 
     dbar2 = (sum(np.real(s) ** 2) + sum(np.imag(s) ** 2)) / (N) # (11) in [4] 
-    
+    print 'dbar2: ' + str(dbar2)
     R_f = (np.dot(np.real(s), ce_matrix) + np.dot(np.imag(s), se_matrix)).T
     I_f = (np.dot(np.real(s), se_matrix) - np.dot(np.imag(s), ce_matrix)).T
     
     hbar2 = ne.evaluate('((R_f ** 2) / CS_f + (I_f ** 2) / CS_f) / 2.')# (19) in [4] 
     
     P_f = np.log10(N * dbar2 - hbar2)  * ((2 - N) / 2.) - np.log10(CS_f)
+    pdb.set_trace()
     return R_f, I_f, hbar2, P_f
    
 #@profile
@@ -109,7 +122,7 @@ def main():
     lags = np.arange(0, 25) * ts
     times=[]
     signal=[]
-    CUDA_GRID = 1 
+    CUDA_GRID = 1
 
     for i in xrange(num_records):
       F=f[0]+0.1*np.random.randn()+float(i-num_records/2)/float(num_records)*.1*f[0]
@@ -166,11 +179,10 @@ def main():
     bayes_gpu = mod.get_function('calc_bayes')
     nsamples = np.int32(len(samples) / 2 / CUDA_GRID)
     nalphas = np.int32(len(alfs))
-    dbar2 = np.float32((sum(np.real(samples) ** 2) + sum(np.imag(samples) ** 2)) / (nsamples))
 
     for i in range(1):
         # run kernel on GPU
-        bayes_gpu(samples_gpu, t_gpu, ce_gpu, se_gpu, CS_f_gpu, R_f_gpu, I_f_gpu, hbar2_gpu, P_f_gpu, np.float32(env_model), nsamples, nalphas, dbar2, block = (int(len(freqs)),1,1), grid = (CUDA_GRID,1))
+        bayes_gpu(samples_gpu, t_gpu, ce_gpu, se_gpu, CS_f_gpu, R_f_gpu, I_f_gpu, hbar2_gpu, P_f_gpu, np.float32(env_model), nsamples, nalphas,  block = (int(len(freqs)),1,1), grid = (CUDA_GRID,1))
     for i in range(1):
         # copy back data
         cuda.memcpy_dtoh(R_f, R_f_gpu) 
