@@ -16,6 +16,7 @@ import time
 
 from timecube import make_spacecube
 mod = pycuda.compiler.SourceModule("""
+
 #include <stdio.h>
 #include <stdint.h>
 
@@ -104,7 +105,7 @@ __global__ void find_peaks(double *P_f, uint32_t *peaks, uint32_t nalphas)
         }
     }
 
-    printf("freq[%d] max val %.2f at %d\\n", threadIdx.x, P_f[maxidx[threadIdx.x]], maxidx[threadIdx.x]);
+    __syncthreads();
     // parallel reduce maximum
     for(i = blockDim.x/2; i > 0; i >>=1) {
         if(threadIdx.x < i) {
@@ -115,6 +116,10 @@ __global__ void find_peaks(double *P_f, uint32_t *peaks, uint32_t nalphas)
         }
         __syncthreads();
     }
+
+    if(threadIdx.x == 0) {
+        peaks[blockIdx.x] = maxidx[threadIdx.x];
+    }
 }
 
 // thread for each pulse, find fwhm and calculate ampltitude
@@ -124,35 +129,38 @@ __global__ void process_peaks(double *P_f, float *R_f, float *I_f, float *CS_f, 
     uint32_t peakidx = peaks[threadIdx.x];
     uint32_t i;
 
-    double apex = P_f[P_f_offset + peakidx];
+    double apex = P_f[peakidx];
     
     float factor = (apex - .30103); // -.30103 is log10(.5)
      
     uint32_t ffwhm = 1;
     uint32_t afwhm = 1;
      
-    // find alpha fwhm
-    for(i = peakidx / nfreqs; i < nalphas && P_f[P_f_offset + i * nfreqs] > factor; i++) {
+    uint32_t pulse_lowerbound = peakidx - (peakidx % (nfreqs * nalphas));
+    uint32_t pulse_upperbound = pulse_lowerbound + (nfreqs * nalphas);
+    
+    // find alpha fwhm, change formatting to more direct..
+    for(i = peakidx; i < pulse_upperbound && P_f[i] > factor; i+=nfreqs) {
         afwhm++; 
     } 
-
-    for(i = peakidx / nfreqs; i > 0 && P_f[P_f_offset + i * nfreqs] > factor; i++) {
+    for(i = peakidx; i >= pulse_lowerbound && P_f[i] > factor; i-=nfreqs) {
         afwhm++; 
     }
-    
     // find freq fwhm
     // don't care about fixing edge cases with peak on max or min freq, they are thrown out anyways
-    for(i = peakidx % nfreqs; i < nfreqs && P_f[P_f_offset + i] > factor; i++) {
-        ffwhm++; 
-    } 
-
-    for(i = peakidx % nfreqs; i > 0 && P_f[P_f_offset + i] > factor; i++) {
+    
+    for(i = peakidx; i % nfreqs != 0 && P_f[i] > factor; i++) {
         ffwhm++; 
     }
-   
+     
+    for(i = peakidx; i % nfreqs != 0 && P_f[i] > factor; i--) {
+        ffwhm++; 
+    }
+
     alphafwhm[threadIdx.x] = afwhm;
     freqfwhm[threadIdx.x] = ffwhm;
-    amplitudes[threadIdx.x] = (R_f[P_f_offset + peakidx] + I_f[P_f_offset + peakidx]) / CS_f[peakidx % nalphas];
+
+    amplitudes[threadIdx.x] = (R_f[peakidx] + I_f[peakidx]) / CS_f[peakidx % nalphas];
 }
 """)
 
@@ -184,7 +192,7 @@ def main():
     lags = np.arange(0, 25) * ts
     times=[]
     signal=[]
-    CUDA_GRID = 1
+    CUDA_GRID = 2
 
     for i in xrange(num_records):
       F=f[0]+0.1*np.random.randn()+float(i-num_records/2)/float(num_records)*.1*f[0]
@@ -239,6 +247,7 @@ def main():
     freq_fwhm_gpu = cuda.mem_alloc(freq_fwhm.nbytes)
     amplitudes_gpu = cuda.mem_alloc(amplitudes.nbytes)
 
+
     # copy over samples..
     cuda.memcpy_htod(t_gpu, times)
     cuda.memcpy_htod(ce_gpu, ce_matrix_g)
@@ -283,6 +292,9 @@ def main():
     cpu_end = time.time()
     print 'gpu: ' + str(gpu_end - gpu_start)
     print 'cpu: ' + str(cpu_end - cpu_start)
+
+    print 'max: ' + str(P_f.flatten()[np.argmax(P_f.flatten())])
+    print 'maxarg: ' +  str(np.argmax(P_f.flatten()))
     # compare..
     plt.subplot(311)
     plt.imshow(P_f[0])
