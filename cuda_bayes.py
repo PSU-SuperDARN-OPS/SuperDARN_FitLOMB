@@ -31,12 +31,11 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
     uint32_t t, i, sample_offset;
     double dbar2 = 0;
 
-    // cache samples in shared memory
     __shared__ float s_samples[MAX_SAMPLES * 2];
     __shared__ float s_cs_f[MAX_ALPHAS];
-    
-    uint32_t samplebase = blockIdx.x * nsamples * 2; 
 
+    // parallel cache samples in shared memory, each thread loading sample number tidx.x + n * nfreqs
+    uint32_t samplebase = blockIdx.x * nsamples * 2; 
     for(i = 0; i < 2 * nsamples / blockDim.x + 1; i++) {
         sample_offset = threadIdx.x + i * blockDim.x;
 
@@ -46,17 +45,19 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
         }
     }
 
-    // assumes nfreqs > nalphas.. 
+    // parallel cache cs_f to shared memory (assumes nfreqs > nalphas!!!)
     if(threadIdx.x < nalphas) {
         s_cs_f[threadIdx.x] = cs_f[threadIdx.x];
     }
     __syncthreads(); 
-
+    
+    // calculate dbar2 
     for(i = 0; i < 2*nsamples; i+=2) {
         dbar2 += pow(s_samples[i + REAL],2) + pow(s_samples[i + IMAG],2);
     }
     dbar2 /= 2 * nsamples;
     __syncthreads(); 
+    
 
     // RI[pulse][alpha][freq]
     // CS[alpha][time][freq]
@@ -64,7 +65,6 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
         uint32_t RI_offset = (blockIdx.x * blockDim.x * nalphas) + (i * blockDim.x) + threadIdx.x;
         R_f[RI_offset] = 0;
         I_f[RI_offset] = 0;
-
         // TODO: if T is a good lag..
         for(t = 0; t < nsamples; t++) {
             uint32_t CS_offset = (i * blockDim.x * nsamples) + (t * blockDim.x) + threadIdx.x;
@@ -125,7 +125,6 @@ __global__ void find_peaks(double *P_f, uint32_t *peaks, uint32_t nalphas)
 // thread for each pulse, find fwhm and calculate ampltitude
 __global__ void process_peaks(double *P_f, float *R_f, float *I_f, float *CS_f, uint32_t *peaks, uint32_t nfreqs, uint32_t nalphas, uint32_t *alphafwhm, uint32_t *freqfwhm, double *amplitudes) 
 {
-    uint32_t P_f_offset = (threadIdx.x * nfreqs * nalphas);
     uint32_t peakidx = peaks[threadIdx.x];
     uint32_t i;
 
@@ -208,15 +207,15 @@ def main():
         signal.append(sig)
    
     samples=np.tile(np.float32(list(chain.from_iterable(izip(np.real(signal), np.imag(signal))))), CUDA_GRID)
-    freqs = np.linspace(-fs/2, fs/2, 128)
+    freqs = np.linspace(-fs/2, fs/2, 32)
     #freqs = np.linspace(0, fs/2, 128)
-    alfs = np.linspace(0,fs/2., 64)
+    alfs = np.linspace(0,fs/2., 16)
 
     times=np.array(np.float32(times))
     ce_matrix_cpu, se_matrix_cpu, CS_f_cpu = make_spacecube(times, freqs, alfs, env_model)
-    times=np.tile(np.array(np.float32(times)), CUDA_GRID)
     ce_matrix, se_matrix, CS_f = make_spacecube(times, freqs, alfs, env_model)
   
+    times=np.tile(np.array(np.float32(times)), CUDA_GRID)
     ce_matrix_g = np.float32(np.swapaxes(ce_matrix,0,2)).flatten()
     se_matrix_g = np.float32(np.swapaxes(se_matrix,0,2)).flatten()
     CS_f_g = np.float32(np.swapaxes(CS_f,0,1).flatten())
@@ -247,8 +246,11 @@ def main():
     freq_fwhm_gpu = cuda.mem_alloc(freq_fwhm.nbytes)
     amplitudes_gpu = cuda.mem_alloc(amplitudes.nbytes)
 
+    cuda.memcpy_htod(R_f_gpu, R_f)
+    cuda.memcpy_htod(I_f_gpu, I_f)
+    cuda.memcpy_htod(P_f_gpu, P_f)
+    cuda.memcpy_htod(hbar2_gpu, hbar2)
 
-    # copy over samples..
     cuda.memcpy_htod(t_gpu, times)
     cuda.memcpy_htod(ce_gpu, ce_matrix_g)
     cuda.memcpy_htod(se_gpu, se_matrix_g)
@@ -268,8 +270,8 @@ def main():
         # run kernel on GPU
         cuda.memcpy_htod(samples_gpu, samples)
         calc_bayes(samples_gpu, t_gpu, ce_gpu, se_gpu, CS_f_gpu, R_f_gpu, I_f_gpu, hbar2_gpu, P_f_gpu, np.float32(env_model), nsamples, nalphas,  block = (int(nfreqs),1,1), grid = (CUDA_GRID,1,1))
-        find_peaks(P_f_gpu, peaks_gpu, nalphas, block = (int(nfreqs),1,1), grid = (CUDA_GRID,1))
-        process_peaks(P_f_gpu, R_f_gpu, I_f_gpu, CS_f_gpu, peaks_gpu, nfreqs, nalphas, alf_fwhm_gpu, freq_fwhm_gpu, amplitudes_gpu, block = (CUDA_GRID,1,1))
+        #find_peaks(P_f_gpu, peaks_gpu, nalphas, block = (int(nfreqs),1,1), grid = (CUDA_GRID,1))
+        #process_peaks(P_f_gpu, R_f_gpu, I_f_gpu, CS_f_gpu, peaks_gpu, nfreqs, nalphas, alf_fwhm_gpu, freq_fwhm_gpu, amplitudes_gpu, block = (CUDA_GRID,1,1))
  
         # copy back data
         cuda.memcpy_dtoh(R_f, R_f_gpu) 
@@ -281,8 +283,6 @@ def main():
         #cuda.memcpy_dtoh(freq_fwhm, freq_fwhm_gpu)
         #cuda.memcpy_dtoh(peaks, peaks_gpu)
     
-    R_f = R_f[0]
-    I_f = I_f[0] 
     gpu_end = time.time()
 
     cpu_start = time.time()
@@ -296,12 +296,16 @@ def main():
     print 'max: ' + str(P_f.flatten()[np.argmax(P_f.flatten())])
     print 'maxarg: ' +  str(np.argmax(P_f.flatten()))
     # compare..
-    plt.subplot(311)
-    plt.imshow(P_f[0])
-    plt.subplot(312)
-    plt.imshow(P_f_cpu)
-    plt.subplot(313)
-    plt.imshow(P_f[0] - P_f_cpu)
+    plt.subplot(411)
+    plt.imshow(R_f[0], interpolation="nearest")
+    plt.subplot(412)
+    plt.imshow(P_f[1], interpolation="nearest") 
+    plt.subplot(413)
+    plt.imshow(R_f_cpu, interpolation="nearest")
+
+    plt.subplot(414)
+    plt.imshow(R_f[0] - R_f_cpu, interpolation="nearest")
+
     plt.show()
     pdb.set_trace()
 
