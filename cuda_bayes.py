@@ -22,10 +22,10 @@ mod = pycuda.compiler.SourceModule("""
 
 #define REAL 0
 #define IMAG 1
-#define MAX_NRANG 300
+#define MAX_NRANG 75
 #define MAX_SAMPLES 30 
 #define MAX_ALPHAS 64
-
+#define MAX_FREQS 128 
 // TODO: FIX FOR GRID > 1...
 __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float *se_matrix, float *cs_f, float *R_f, float *I_f, double *hbar2, double *P_f, float env_model, int32_t nsamples, int32_t nalphas)
 {
@@ -90,8 +90,8 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
 __global__ void find_peaks(double *P_f, int32_t *peaks, int32_t nalphas)
 {
     int32_t i;
-    __shared__ int32_t maxidx[MAX_NRANG];
-    __shared__ double maxval[MAX_NRANG];
+    __shared__ int32_t maxidx[MAX_FREQS];
+    __shared__ double maxval[MAX_FREQS];
 
     maxidx[threadIdx.x] = 0;
     maxval[threadIdx.x] = -1e6;
@@ -272,7 +272,7 @@ def main():
         cuda.memcpy_htod(samples_gpu, samples)
         calc_bayes(samples_gpu, t_gpu, ce_gpu, se_gpu, CS_f_gpu, R_f_gpu, I_f_gpu, hbar2_gpu, P_f_gpu, np.float32(env_model), nsamples, nalphas,  block = (int(nfreqs),1,1), grid = (CUDA_GRID,1,1))
         find_peaks(P_f_gpu, peaks_gpu, nalphas, block = (int(nfreqs),1,1), grid = (CUDA_GRID,1))
-        #process_peaks(P_f_gpu, R_f_gpu, I_f_gpu, CS_f_gpu, peaks_gpu, nfreqs, nalphas, alf_fwhm_gpu, freq_fwhm_gpu, amplitudes_gpu, block = (CUDA_GRID,1,1))
+        process_peaks(P_f_gpu, R_f_gpu, I_f_gpu, CS_f_gpu, peaks_gpu, nfreqs, nalphas, alf_fwhm_gpu, freq_fwhm_gpu, amplitudes_gpu, block = (CUDA_GRID,1,1))
  
         # copy back data
         cuda.memcpy_dtoh(amplitudes, amplitudes_gpu)
