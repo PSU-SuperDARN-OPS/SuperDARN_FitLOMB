@@ -24,15 +24,11 @@ mod = pycuda.compiler.SourceModule("""
 #define MAX_NRANG 300
 #define MAX_SAMPLES 30
 #define MAX_ALPHAS 64
-
+// TODO: FIX FOR GRID > 1...
 __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float *se_matrix, float *cs_f, float *R_f, float *I_f, double *hbar2, double *P_f, float env_model, uint32_t nsamples, uint32_t nalphas)
 {
-    // possible optimizations:
-    // - eliminate cs_f freq dependence..
     uint32_t t, i, sample_offset;
     double dbar2 = 0;
-    
-
 
     // cache samples in shared memory
     __shared__ float s_samples[MAX_SAMPLES * 2];
@@ -53,13 +49,12 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
     if(threadIdx.x < nalphas) {
         s_cs_f[threadIdx.x] = cs_f[threadIdx.x];
     }
-    
     __syncthreads(); 
+
     for(i = 0; i < 2*nsamples; i+=2) {
         dbar2 += pow(s_samples[i + REAL],2) + pow(s_samples[i + IMAG],2);
     }
     dbar2 /= 2 * nsamples;
-
     __syncthreads(); 
 
     // RI[pulse][alpha][freq]
@@ -90,37 +85,35 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
 // P_f is [pulse][alpha][freq]
 // thread for each freq, block across pulses
 // TODO: currently assumes a power of 2 number of freqs 
-__global__ void find_peaks(float *P_f, uint32_t *peaks, uint32_t nalphas)
+__global__ void find_peaks(double *P_f, uint32_t *peaks, uint32_t nalphas)
 {
     uint32_t i;
     __shared__ uint32_t maxidx[MAX_NRANG];
-    __shared__ uint32_t maxval[MAX_NRANG];
+    __shared__ double maxval[MAX_NRANG];
 
     maxidx[threadIdx.x] = 0;
-    maxval[threadIdx.x] = 0;
+    maxval[threadIdx.x] = -1e6;
     
     // find max along frequency axis
     for(i = 0; i < nalphas; i++) {
         uint32_t P_f_idx = (blockIdx.x * blockDim.x * nalphas) + (i * blockDim.x) + threadIdx.x;
+
         if (P_f[P_f_idx] > maxval[threadIdx.x]) { 
-            maxidx[threadIdx.x] = i;
+            maxidx[threadIdx.x] = P_f_idx;
             maxval[threadIdx.x] = P_f[P_f_idx];
         }
     }
 
+    printf("freq[%d] max val %.2f at %d\\n", threadIdx.x, P_f[maxidx[threadIdx.x]], maxidx[threadIdx.x]);
     // parallel reduce maximum
     for(i = blockDim.x/2; i > 0; i >>=1) {
         if(threadIdx.x < i) {
            if(maxval[threadIdx.x + i] > maxval[threadIdx.x]) {
               maxval[threadIdx.x] = maxval[threadIdx.x + i];
-              maxidx[threadIdx.x] = maxidx[threadIdx.x];
+              maxidx[threadIdx.x] = maxidx[threadIdx.x + i];
            }
         }
         __syncthreads();
-    }
-
-    if(threadIdx.x == 0) {
-        peaks[blockIdx.x] = maxidx[threadIdx.x];
     }
 }
 
@@ -159,7 +152,6 @@ __global__ void process_peaks(double *P_f, float *R_f, float *I_f, float *CS_f, 
    
     alphafwhm[threadIdx.x] = afwhm;
     freqfwhm[threadIdx.x] = ffwhm;
-    
     amplitudes[threadIdx.x] = (R_f[P_f_offset + peakidx] + I_f[P_f_offset + peakidx]) / CS_f[peakidx % nalphas];
 }
 """)
@@ -181,7 +173,6 @@ def calculate_bayes(s, t, f, alfs, env_model, ce_matrix, se_matrix, CS_f):
 # kernprof -l cuda_bayes.py
 #python -m line_profiler script_to_profile.py.lprof
 def main():
-    # prep synthetic data to process
     num_records=1
     fs = 100.
     ts = 1./fs
@@ -268,8 +259,8 @@ def main():
         # run kernel on GPU
         cuda.memcpy_htod(samples_gpu, samples)
         calc_bayes(samples_gpu, t_gpu, ce_gpu, se_gpu, CS_f_gpu, R_f_gpu, I_f_gpu, hbar2_gpu, P_f_gpu, np.float32(env_model), nsamples, nalphas,  block = (int(nfreqs),1,1), grid = (CUDA_GRID,1,1))
-        #find_peaks(P_f_gpu, peaks_gpu, nalphas, block = (int(nfreqs),1,1), grid = (CUDA_GRID,1))
-        #process_peaks(P_f_gpu, R_f_gpu, I_f_gpu, CS_f_gpu, peaks_gpu, nfreqs, nalphas, alf_fwhm_gpu, freq_fwhm_gpu, amplitudes_gpu, block = (CUDA_GRID,1,1))
+        find_peaks(P_f_gpu, peaks_gpu, nalphas, block = (int(nfreqs),1,1), grid = (CUDA_GRID,1))
+        process_peaks(P_f_gpu, R_f_gpu, I_f_gpu, CS_f_gpu, peaks_gpu, nfreqs, nalphas, alf_fwhm_gpu, freq_fwhm_gpu, amplitudes_gpu, block = (CUDA_GRID,1,1))
  
         # copy back data
         cuda.memcpy_dtoh(R_f, R_f_gpu) 
@@ -293,6 +284,13 @@ def main():
     print 'gpu: ' + str(gpu_end - gpu_start)
     print 'cpu: ' + str(cpu_end - cpu_start)
     # compare..
+    plt.subplot(311)
+    plt.imshow(P_f[0])
+    plt.subplot(312)
+    plt.imshow(P_f_cpu)
+    plt.subplot(313)
+    plt.imshow(P_f[0] - P_f_cpu)
+    plt.show()
     pdb.set_trace()
 
 if __name__ == '__main__':
