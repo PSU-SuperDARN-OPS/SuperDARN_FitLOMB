@@ -33,7 +33,7 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
 
     __shared__ float s_samples[MAX_SAMPLES * 2];
     __shared__ float s_cs_f[MAX_ALPHAS];
-
+    
     // parallel cache samples in shared memory, each thread loading sample number tidx.x + n * nfreqs
     uint32_t samplebase = blockIdx.x * nsamples * 2; 
     for(i = 0; i < 2 * nsamples / blockDim.x + 1; i++) {
@@ -191,7 +191,7 @@ def main():
     lags = np.arange(0, 25) * ts
     times=[]
     signal=[]
-    CUDA_GRID = 2
+    CUDA_GRID = 75
 
     for i in xrange(num_records):
       F=f[0]+0.1*np.random.randn()+float(i-num_records/2)/float(num_records)*.1*f[0]
@@ -207,9 +207,9 @@ def main():
         signal.append(sig)
    
     samples=np.tile(np.float32(list(chain.from_iterable(izip(np.real(signal), np.imag(signal))))), CUDA_GRID)
-    freqs = np.linspace(-fs/2, fs/2, 32)
+    freqs = np.linspace(-fs/2, fs/2, 128)
     #freqs = np.linspace(0, fs/2, 128)
-    alfs = np.linspace(0,fs/2., 16)
+    alfs = np.linspace(0,fs/2., 64)
 
     times=np.array(np.float32(times))
     ce_matrix_cpu, se_matrix_cpu, CS_f_cpu = make_spacecube(times, freqs, alfs, env_model)
@@ -266,22 +266,18 @@ def main():
     nfreqs = np.int32(len(freqs))
 
 
-    for i in range(1):
+    for i in range(5000):
         # run kernel on GPU
         cuda.memcpy_htod(samples_gpu, samples)
         calc_bayes(samples_gpu, t_gpu, ce_gpu, se_gpu, CS_f_gpu, R_f_gpu, I_f_gpu, hbar2_gpu, P_f_gpu, np.float32(env_model), nsamples, nalphas,  block = (int(nfreqs),1,1), grid = (CUDA_GRID,1,1))
-        #find_peaks(P_f_gpu, peaks_gpu, nalphas, block = (int(nfreqs),1,1), grid = (CUDA_GRID,1))
-        #process_peaks(P_f_gpu, R_f_gpu, I_f_gpu, CS_f_gpu, peaks_gpu, nfreqs, nalphas, alf_fwhm_gpu, freq_fwhm_gpu, amplitudes_gpu, block = (CUDA_GRID,1,1))
+        find_peaks(P_f_gpu, peaks_gpu, nalphas, block = (int(nfreqs),1,1), grid = (CUDA_GRID,1))
+        process_peaks(P_f_gpu, R_f_gpu, I_f_gpu, CS_f_gpu, peaks_gpu, nfreqs, nalphas, alf_fwhm_gpu, freq_fwhm_gpu, amplitudes_gpu, block = (CUDA_GRID,1,1))
  
         # copy back data
-        cuda.memcpy_dtoh(R_f, R_f_gpu) 
-        cuda.memcpy_dtoh(I_f, I_f_gpu) 
-        cuda.memcpy_dtoh(hbar2, hbar2_gpu)
-        cuda.memcpy_dtoh(P_f, P_f_gpu)
-        #cuda.memcpy_dtoh(amplitudes, amplitudes_gpu)
-        #cuda.memcpy_dtoh(alf_fwhm, alf_fwhm_gpu)
-        #cuda.memcpy_dtoh(freq_fwhm, freq_fwhm_gpu)
-        #cuda.memcpy_dtoh(peaks, peaks_gpu)
+        cuda.memcpy_dtoh(amplitudes, amplitudes_gpu)
+        cuda.memcpy_dtoh(alf_fwhm, alf_fwhm_gpu)
+        cuda.memcpy_dtoh(freq_fwhm, freq_fwhm_gpu)
+        cuda.memcpy_dtoh(peaks, peaks_gpu)
     
     gpu_end = time.time()
 
@@ -293,21 +289,21 @@ def main():
     print 'gpu: ' + str(gpu_end - gpu_start)
     print 'cpu: ' + str(cpu_end - cpu_start)
 
-    print 'max: ' + str(P_f.flatten()[np.argmax(P_f.flatten())])
-    print 'maxarg: ' +  str(np.argmax(P_f.flatten()))
     # compare..
+    '''
     plt.subplot(411)
-    plt.imshow(R_f[0], interpolation="nearest")
+    plt.imshow(P_f[0], interpolation="nearest")
     plt.subplot(412)
     plt.imshow(P_f[1], interpolation="nearest") 
     plt.subplot(413)
-    plt.imshow(R_f_cpu, interpolation="nearest")
+    plt.imshow(P_f_cpu, interpolation="nearest")
 
     plt.subplot(414)
-    plt.imshow(R_f[0] - R_f_cpu, interpolation="nearest")
+    plt.imshow(P_f[0] - P_f_cpu, interpolation="nearest")
 
     plt.show()
     pdb.set_trace()
+    '''
 
 if __name__ == '__main__':
     main()
