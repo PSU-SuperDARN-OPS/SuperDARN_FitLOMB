@@ -23,19 +23,20 @@ mod = pycuda.compiler.SourceModule("""
 #define REAL 0
 #define IMAG 1
 #define MAX_NRANG 300
-#define MAX_SAMPLES 30
+#define MAX_SAMPLES 30 
 #define MAX_ALPHAS 64
+
 // TODO: FIX FOR GRID > 1...
-__global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float *se_matrix, float *cs_f, float *R_f, float *I_f, double *hbar2, double *P_f, float env_model, uint32_t nsamples, uint32_t nalphas)
+__global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float *se_matrix, float *cs_f, float *R_f, float *I_f, double *hbar2, double *P_f, float env_model, int32_t nsamples, int32_t nalphas)
 {
-    uint32_t t, i, sample_offset;
+    int32_t t, i, sample_offset;
     double dbar2 = 0;
 
     __shared__ float s_samples[MAX_SAMPLES * 2];
     __shared__ float s_cs_f[MAX_ALPHAS];
     
     // parallel cache samples in shared memory, each thread loading sample number tidx.x + n * nfreqs
-    uint32_t samplebase = blockIdx.x * nsamples * 2; 
+    int32_t samplebase = blockIdx.x * nsamples * 2; 
     for(i = 0; i < 2 * nsamples / blockDim.x + 1; i++) {
         sample_offset = threadIdx.x + i * blockDim.x;
 
@@ -62,12 +63,12 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
     // RI[pulse][alpha][freq]
     // CS[alpha][time][freq]
     for(i =  0; i < nalphas; i++) {
-        uint32_t RI_offset = (blockIdx.x * blockDim.x * nalphas) + (i * blockDim.x) + threadIdx.x;
+        int32_t RI_offset = (blockIdx.x * blockDim.x * nalphas) + (i * blockDim.x) + threadIdx.x;
         R_f[RI_offset] = 0;
         I_f[RI_offset] = 0;
         // TODO: if T is a good lag..
         for(t = 0; t < nsamples; t++) {
-            uint32_t CS_offset = (i * blockDim.x * nsamples) + (t * blockDim.x) + threadIdx.x;
+            int32_t CS_offset = (i * blockDim.x * nsamples) + (t * blockDim.x) + threadIdx.x;
             sample_offset = 2*t;
 
             R_f[RI_offset] +=   s_samples[sample_offset + REAL] * ce_matrix[CS_offset] + \
@@ -86,10 +87,10 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
 // P_f is [pulse][alpha][freq]
 // thread for each freq, block across pulses
 // TODO: currently assumes a power of 2 number of freqs 
-__global__ void find_peaks(double *P_f, uint32_t *peaks, uint32_t nalphas)
+__global__ void find_peaks(double *P_f, int32_t *peaks, int32_t nalphas)
 {
-    uint32_t i;
-    __shared__ uint32_t maxidx[MAX_NRANG];
+    int32_t i;
+    __shared__ int32_t maxidx[MAX_NRANG];
     __shared__ double maxval[MAX_NRANG];
 
     maxidx[threadIdx.x] = 0;
@@ -97,7 +98,7 @@ __global__ void find_peaks(double *P_f, uint32_t *peaks, uint32_t nalphas)
     
     // find max along frequency axis
     for(i = 0; i < nalphas; i++) {
-        uint32_t P_f_idx = (blockIdx.x * blockDim.x * nalphas) + (i * blockDim.x) + threadIdx.x;
+        int32_t P_f_idx = (blockIdx.x * blockDim.x * nalphas) + (i * blockDim.x) + threadIdx.x;
 
         if (P_f[P_f_idx] > maxval[threadIdx.x]) { 
             maxidx[threadIdx.x] = P_f_idx;
@@ -123,20 +124,20 @@ __global__ void find_peaks(double *P_f, uint32_t *peaks, uint32_t nalphas)
 }
 
 // thread for each pulse, find fwhm and calculate ampltitude
-__global__ void process_peaks(double *P_f, float *R_f, float *I_f, float *CS_f, uint32_t *peaks, uint32_t nfreqs, uint32_t nalphas, uint32_t *alphafwhm, uint32_t *freqfwhm, double *amplitudes) 
+__global__ void process_peaks(double *P_f, float *R_f, float *I_f, float *CS_f, int32_t *peaks, int32_t nfreqs, int32_t nalphas, int32_t *alphafwhm, int32_t *freqfwhm, double *amplitudes) 
 {
-    uint32_t peakidx = peaks[threadIdx.x];
-    uint32_t i;
+    int32_t peakidx = peaks[threadIdx.x];
+    int32_t i;
 
     double apex = P_f[peakidx];
     
     float factor = (apex - .30103); // -.30103 is log10(.5)
      
-    uint32_t ffwhm = 1;
-    uint32_t afwhm = 1;
+    int32_t ffwhm = 1;
+    int32_t afwhm = 1;
      
-    uint32_t pulse_lowerbound = peakidx - (peakidx % (nfreqs * nalphas));
-    uint32_t pulse_upperbound = pulse_lowerbound + (nfreqs * nalphas);
+    int32_t pulse_lowerbound = peakidx - (peakidx % (nfreqs * nalphas));
+    int32_t pulse_upperbound = pulse_lowerbound + (nfreqs * nalphas);
     
     // find alpha fwhm, change formatting to more direct..
     for(i = peakidx; i < pulse_upperbound && P_f[i] > factor; i+=nfreqs) {
@@ -226,9 +227,9 @@ def main():
     hbar2 = np.float64(np.zeros([CUDA_GRID, len(alfs), len(freqs)]))
     P_f = np.float64(np.zeros([CUDA_GRID, len(alfs), len(freqs)]))
         
-    peaks = np.uint32(np.zeros(CUDA_GRID))
-    alf_fwhm = np.uint32(np.zeros(CUDA_GRID))
-    freq_fwhm = np.uint32(np.zeros(CUDA_GRID))
+    peaks = np.int32(np.zeros(CUDA_GRID))
+    alf_fwhm = np.int32(np.zeros(CUDA_GRID))
+    freq_fwhm = np.int32(np.zeros(CUDA_GRID))
     amplitudes = np.float64(np.zeros(CUDA_GRID))
 
     # allocate space on GPU 
@@ -266,12 +267,12 @@ def main():
     nfreqs = np.int32(len(freqs))
 
 
-    for i in range(5000):
+    for i in range(500):
         # run kernel on GPU
         cuda.memcpy_htod(samples_gpu, samples)
         calc_bayes(samples_gpu, t_gpu, ce_gpu, se_gpu, CS_f_gpu, R_f_gpu, I_f_gpu, hbar2_gpu, P_f_gpu, np.float32(env_model), nsamples, nalphas,  block = (int(nfreqs),1,1), grid = (CUDA_GRID,1,1))
         find_peaks(P_f_gpu, peaks_gpu, nalphas, block = (int(nfreqs),1,1), grid = (CUDA_GRID,1))
-        process_peaks(P_f_gpu, R_f_gpu, I_f_gpu, CS_f_gpu, peaks_gpu, nfreqs, nalphas, alf_fwhm_gpu, freq_fwhm_gpu, amplitudes_gpu, block = (CUDA_GRID,1,1))
+        #process_peaks(P_f_gpu, R_f_gpu, I_f_gpu, CS_f_gpu, peaks_gpu, nfreqs, nalphas, alf_fwhm_gpu, freq_fwhm_gpu, amplitudes_gpu, block = (CUDA_GRID,1,1))
  
         # copy back data
         cuda.memcpy_dtoh(amplitudes, amplitudes_gpu)
