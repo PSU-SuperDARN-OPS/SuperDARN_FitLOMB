@@ -22,27 +22,47 @@ mod = pycuda.compiler.SourceModule("""
 
 #define REAL 0
 #define IMAG 1
-#define MAX_NRANG 75
 #define MAX_SAMPLES 30 
-#define MAX_ALPHAS 64
-#define MAX_FREQS 128 
-// TODO: FIX FOR GRID > 1...
+#define MAX_ALPHAS 128 // MUST BE A POWER OF 2
+#define MAX_FREQS 256 // MUST BE A POWER OF 2
+
+// lags is mask of good lags 
 __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float *se_matrix, float *cs_f, float *R_f, float *I_f, double *hbar2, double *P_f, float env_model, int32_t nsamples, int32_t nalphas)
 {
-    int32_t t, i, sample_offset;
+    int32_t t, i, sample_offset, samplebase;
     double dbar2 = 0;
+    int32_t n_good_samples;
 
     __shared__ float s_samples[MAX_SAMPLES * 2];
+    __shared__ int8_t s_lags[MAX_SAMPLES];
     __shared__ float s_cs_f[MAX_ALPHAS];
-    
+
+     // parallel cache lag mask in shared memory
+    samplebase = blockIdx.x * nsamples; 
+    for(i = 0; i < nsamples / blockDim.x + 1; i++) {
+        sample_offset = threadIdx.x + i * blockDim.x;
+        if(sample_offset < nsamples) {
+            s_lags[sample_offset] = (lags[samplebase + sample_offset] != 0);
+        
+        }
+    }
+    __syncthreads(); 
+
     // parallel cache samples in shared memory, each thread loading sample number tidx.x + n * nfreqs
-    int32_t samplebase = blockIdx.x * nsamples * 2; 
+    // mask out bad lags with zero
+    samplebase = blockIdx.x * nsamples * 2; 
     for(i = 0; i < 2 * nsamples / blockDim.x + 1; i++) {
         sample_offset = threadIdx.x + i * blockDim.x;
-
         if(sample_offset < nsamples * 2) {
-            s_samples[sample_offset] = samples[samplebase + sample_offset];
-        
+            s_samples[sample_offset] = samples[samplebase + sample_offset] * (s_lags[sample_offset >> 1] != 0);
+        }
+    }
+    __syncthreads(); 
+    
+    // calculate number of *good* lags.. needed for dbar2 scaling
+    for(i = 0; i < nsamples; i++) {
+        if(s_lags[i]) {
+            n_good_samples++;
         }
     }
 
@@ -50,13 +70,12 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
     if(threadIdx.x < nalphas) {
         s_cs_f[threadIdx.x] = cs_f[threadIdx.x];
     }
-    __syncthreads(); 
     
     // calculate dbar2 
     for(i = 0; i < 2*nsamples; i+=2) {
         dbar2 += pow(s_samples[i + REAL],2) + pow(s_samples[i + IMAG],2);
     }
-    dbar2 /= 2 * nsamples;
+    dbar2 /= 2 * n_good_samples;
     __syncthreads(); 
     
 
@@ -192,7 +211,7 @@ def main():
     lags = np.arange(0, 25) * ts
     times=[]
     signal=[]
-    CUDA_GRID = 75
+    CUDA_GRID = 225 
 
     for i in xrange(num_records):
       F=f[0]+0.1*np.random.randn()+float(i-num_records/2)/float(num_records)*.1*f[0]
@@ -208,9 +227,9 @@ def main():
         signal.append(sig)
    
     samples=np.tile(np.float32(list(chain.from_iterable(izip(np.real(signal), np.imag(signal))))), CUDA_GRID)
-    freqs = np.linspace(-fs/2, fs/2, 128)
+    freqs = np.linspace(-fs/2, fs/2, 256)
     #freqs = np.linspace(0, fs/2, 128)
-    alfs = np.linspace(0,fs/2., 64)
+    alfs = np.linspace(0,fs/2., 128)
 
     times=np.array(np.float32(times))
     ce_matrix_cpu, se_matrix_cpu, CS_f_cpu = make_spacecube(times, freqs, alfs, env_model)
@@ -267,7 +286,7 @@ def main():
     nfreqs = np.int32(len(freqs))
 
 
-    for i in range(500):
+    for i in range(1):
         # run kernel on GPU
         cuda.memcpy_htod(samples_gpu, samples)
         calc_bayes(samples_gpu, t_gpu, ce_gpu, se_gpu, CS_f_gpu, R_f_gpu, I_f_gpu, hbar2_gpu, P_f_gpu, np.float32(env_model), nsamples, nalphas,  block = (int(nfreqs),1,1), grid = (CUDA_GRID,1,1))
