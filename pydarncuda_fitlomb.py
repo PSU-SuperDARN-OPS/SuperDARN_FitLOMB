@@ -3,10 +3,8 @@
 # mit license
 
 # TODO: move raw data to ARSC, process on their machines
-# TODO: look at zooming off fit snr for each iteration
 # TODO: look at residual spread of fitacf and fitlomb to samples
 # TODO: look at variance of residual, compare with fitacf
-# TODO: add generalized timecube generation
 
 import argparse
 import pydarn.sdio as sdio
@@ -16,11 +14,11 @@ import h5py
 import lagstate
 import pdb
 import os
-
+from itertools import chain, izip
 from cuda_bayes import BayesGPU
 
-FITLOMB_REVISION_MAJOR = 1
-FITLOMB_REVISION_MINOR = 2
+FITLOMB_REVISION_MAJOR = 2
+FITLOMB_REVISION_MINOR = 0
 ORIGIN_CODE = 'pydarncuda_fitlomb.py'
 DATA_DIR = './cudatmpdata/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
@@ -31,10 +29,17 @@ Q_OFFSET = 1
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 1500 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 1200 # m/s, max spectral width to include in lomb 
+NFREQS = 256
+NALFS = 128
+NLAGS = 25
+MAXPULSES = 225
+LAMBDA_FIT = 1
+SIGMA_FIT = 2
 SNR_THRESH = 1 # ratio of power in fitted signal and residual 
 C = 3e8
+MAX_TFREQ = 16e6
 
-CALC_SIGMA = True 
+CALC_SIGMA = False 
 
 GROUP_ATTR_TYPES = {\
         'txpow':np.int16,\
@@ -97,25 +102,7 @@ class CULombFit:
         self.bmnum = self.rawacf.bmnum # beam number
         self.pwr0 = self.rawacf.fit.pwr0 # pwr0
         self.recordtime = record.time 
-        
-        # calculate max decay rate for MAX_W spectral width
-        amax = (np.pi * 2 * self.tfreq * 1e3 * MAX_W) / C 
-
-        # calculate max frequency either nyquist rate, or calculated off max velocity
-        # stepping of alpha on first pass is limited to even integers
-        # stepping of frequency on first pass is limited to even integers 
-        nyquist = 1 / (2e-6 * self.mpinc)
-        fmax = np.ceil(min((MAX_V * 2 * (self.tfreq * 1e3)) / C, nyquist))
-        df = 6  #(VEL_RES * 2.) * (self.tfreq * 1e3) / C
-        fmax += fmax % df
-
-        self.freqs = np.arange(-fmax,fmax, df)
-        
-        self.maxalf = amax
-        da = 6
-        self.maxfreqs = 1
-        self.alfs = np.arange(0, self.maxalf, da)
-        
+               
         # thresholds on velocity and spectral width for surface scatter flag (m/s)
         self.v_thresh = 30.
         self.w_thresh = 90. # blanchard, 2009
@@ -130,7 +117,8 @@ class CULombFit:
         self.wimax_thresh = MAX_W - 100
         self.vimax_thresh = MAX_V - 100
         self.vimin_thresh = 100
-       
+        
+        self.maxfreqs = NFREQS
         # initialize empty arrays for fitted parameters 
         self.lfits      = [[] for r in self.ranges]
         self.sfits      = [[] for r in self.ranges]
@@ -212,6 +200,7 @@ class CULombFit:
         # copy over vectors from rawacf
         add_compact_dset(hdf5file, groupname, 'ptab', np.int16(self.ptab), h5py.h5t.STD_I16BE)
         add_compact_dset(hdf5file, groupname, 'ltab', np.int16(self.ltab), h5py.h5t.STD_I16BE)
+        q
         add_compact_dset(hdf5file, groupname, 'pwr0', np.int32(self.pwr0), h5py.h5t.STD_I32BE)
         
         # add calculated parameters
@@ -244,21 +233,36 @@ class CULombFit:
             add_compact_dset(hdf5file, groupname, 'r2_phase_s', np.float64(self.r2_phase_s), h5py.h5t.NATIVE_DOUBLE)
     
     def CudaProcessPulse(self, gpu):
-        # format data for loading on GPU
-        # load data to GPU
-        # run processing
-        # load back from GPU 
-        # run ProcessPeaks() in parallel
+        # TODO: create samples and lagmask 
+        # TODO: check time resolution and frequency band, see if we need to regenerate ce/se matricies
+        lagsmask = [] 
+        isamples = []
 
-    # calculates FitACF-like parameters for each peak in the spectrum
-    # processes the pulse (move it __init__)?
-    def ProcessPulse(self, cubecache):
         for r in self.ranges:
-            #eaks = self.CalculatePeaks(r, cubecache)
-            if CALC_SIGMA:
-                peaks = self.CalculatePeaks(r, cubecache, env_model = 2)
-                pass
-        self.ProcessPeaks()
+            times, samples = self._CalcSamples(r)
+            lmask = [l in times for l in gpu.lags]
+            lagsmask.append(lmask)
+            
+            # create interleaved samples array (todo: don't calculate bad samples for ~2x speedup)
+            psamples = []
+            i = 0
+            for l in lmask:
+                if(l == 0):
+                    psamples.append(0)
+                    psamples.append(0)
+                else:
+                    psamples.append(np.real(samples[i]))
+                    psamples.append(np.imag(samples[i]))
+                    i = i + 1
+
+            isamples.append(psamples)      
+
+        lagsmask = np.int8(np.array(lagsmask))
+        isamples = np.float32(np.array(isamples))
+        gpu.run_bayesfit(isamples, lagsmask)
+        gpu.process_bayesfit(self.tfreq, self.noise)
+
+
    
     # get time and good complex samples for a range gate
     def _CalcSamples(self, rgate):
@@ -281,99 +285,68 @@ class CULombFit:
         return t, samples
 
 
-    # finds returns in spectrum and records cell velocity
-    def CalculatePeaks(self, rgate, cubecache, env_model = 1, otherpulses = None):
-        t, samples = self._CalcSamples(rgate)
-        
-        if otherpulses:
-            for op in otherpulses:
-                ot, osamples = op._CalcSamples(rgate)
-                t = np.concatenate([t, ot])
-                samples = np.concatenate([samples, osamples])
-        
-        # calcuate generalized lomb-scargle periodogram iteratively
-        if env_model == 1:
-            self.lfits[rgate] = iterative_bayes(samples, t, self.freqs, self.alfs, env_model, self.maxfreqs, cubecache = cubecache)
-        elif env_model == 2:
-            self.sfits[rgate] = iterative_bayes(samples, t, self.freqs, self.alfs, env_model, self.maxfreqs, cubecache = cubecache)
-
-    def ProcessPeaks(self):
+    def CudaCopyPeaks(self, gpu):
         # compute velocity, width, and power for each peak with "sigma" and "lambda" fits
-        for rgate in self.ranges:
-            for (i, fit) in enumerate(self.lfits[rgate]):
-                N = 2 * len(fit['t'])  
+        N = 2 * len(fit['t'])  
 
-                # calculate "lambda" parameters
-                # see Effects of mixed scatter on SuperDARN convection maps near (1) for spectral width 
-                # see ros.3.6/codebase/superdarn/src.lib/tk/fitacf/src/fit_acf.c and do_fit.c
-                self.w_l[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.tfreq * 1e3)) 
-                # approximate alpha error by taking half of range of alphas covered in fwhm
-                # results in standard deviation
-                self.w_l_std[rgate,i] = (((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA)
-                self.w_l_e[rgate,i] = self.w_l_std[rgate,i] / np.sqrt(N)
-                
-                # record ratio of power in signal versus power in fitted signal
-                self.fit_snr_l[rgate,i] = fit['fit_snr']
+        self.w_l = gpu.w_l 
+        self.w_l_std = gpu.w_l_std
+        self.w_l_e = gpu.w_l_e
+        
+        # record ratio of power in signal versus power in fitted signal
+        #self.fit_snr_l[rgate,i] = fit['fit_snr']
 
-                # amplitude estimation, see bayesian analysis v: amplitude estimation, multiple well separated sinusoids
-                # bretthorst, equation 78, I'm probably doing this wrong...
-                # to match fitacf, scale p_l by 10 * log10
-                self.p_l[rgate,i] = fit['amplitude'] / self.noise
-                self.p_l_e[rgate,i] = np.sqrt((self.noise ** 2)/fit['amplitude_error_unscaled'])/self.noise # this may be scaled wrong..
-
-                v_l = (fit['frequency'] * C) / (2 * self.tfreq * 1e3)
-                self.v_l[rgate,i] = v_l
-                # approximate velocity error as half the range of velocities covered by fwhm 
-                # "nonuniform sampling: bandwidth and aliasing", page 25
-
-                self.v_l_std[rgate,i] = ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA)
-                self.v_l_e[rgate,i] = self.v_l_std[rgate,i] / np.sqrt(N)
-                
-                self.r2_phase_l[rgate, i]  = fit['r2_phase']
-                # for information on setting surface/ionospheric scatter thresholds, see
-                # A new approach for identifying ionospheric backscatterin midlatitude SuperDARN HF radar observations
-                if abs(v_l) - (self.v_thresh - (self.v_thresh / self.w_thresh) * abs(self.w_l[rgate, i])) > 0: 
-                    self.iflg[rgate,i] = 1
-                else:
-                    self.gflg[rgate,i] = 1
-
-                # set qflg if .. signal to noise ratios are high enough, not stuck 
-                if self.p_l[rgate,i] > self.qpwr_thresh and \
-                        self.w_l_e[rgate,i] < self.qwle_thresh and \
-                        self.v_l_e[rgate, i] < self.qvle_thresh and \
-                        self.w_l[rgate, i] < self.wimax_thresh and \
-                        self.v_l[rgate, i] < self.vimax_thresh and \
-                        self.w_l[rgate, i] > -self.wimax_thresh and \
-                        self.fit_snr_l[rgate, i] > self.snr_thresh and \
-                        self.v_l[rgate, i] > -self.vimax_thresh:
-                    self.qflg[rgate,i] = 1
-                
-            if CALC_SIGMA:
-                for (i, fit) in enumerate(self.sfits[rgate]):
-                    # calculate "sigma" parameters
-                    np.append(self.sd_s[rgate],0) # TODO: what is a reasonable value for this? 
-                     
-                    self.w_s[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.tfreq * 1e3)) 
-
-                    self.w_s_std[rgate,i] = (((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA)
-                    self.w_s_e[rgate,i] = self.w_s_std[rgate,i] / np.sqrt(N)
-                    
-                    self.p_s[rgate,i] = fit['amplitude'] / self.noise
-                    self.p_s_e[rgate,i] = np.sqrt((self.noise ** 2)/fit['amplitude_error_unscaled'])/self.noise # this may be scaled wrong..
-
-                    v_s = (fit['frequency'] * C) / (2 * self.tfreq * 1e3)
-                    self.v_s[rgate,i] = v_s
-
-                    self.r2_phase_s[rgate, i] = fit['r2_phase']
-                    self.fit_snr_s[rgate,i] = fit['fit_snr']
-                    self.v_s_std[rgate,i] = ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA)
-                    self.v_s_e[rgate,i] = self.v_s_std[rgate,i] / np.sqrt(N)
-                self.p_s[self.p_s <= 0] = np.nan 
-                self.p_s = 10 * np.log10(self.p_s)
-
+        # amplitude estimation, see bayesian analysis v: amplitude estimation, multiple well separated sinusoids
+        # bretthorst, equation 78, I'm probably doing this wrong...
+        # to match fitacf, scale p_l by 10 * log10
+        self.p_l = gpu.p_l
         # scale p_l by 10 * log10 to match fitacf
         self.p_l[self.p_l <= 0] = np.nan 
         self.p_l = 10 * np.log10(self.p_l)
+
+        self.v_l = gpu.v_l 
+        self.v_l_std = gpu.v_l_std
+        self.v_l_e = gpu.v_l_e
+        
+        self.iflg = (abs(v_l) - (self.v_thresh - (self.v_thresh / self.w_thresh) * abs(self.w_l[rgate, i])) > 0) 
+        
+        for rgate in self.ranges:
+            i = 0
+            # set qflg if .. signal to noise ratios are high enough, not stuck 
+            if self.p_l[rgate,i] > self.qpwr_thresh and \
+                    self.w_l_e[rgate,i] < self.qwle_thresh and \
+                    self.v_l_e[rgate, i] < self.qvle_thresh and \
+                    self.w_l[rgate, i] < self.wimax_thresh and \
+                    self.v_l[rgate, i] < self.vimax_thresh and \
+                    self.w_l[rgate, i] > -self.wimax_thresh and \
+                    self.fit_snr_l[rgate, i] <= self.snr_thresh and \
+                    self.v_l[rgate, i] > -self.vimax_thresh:
+                self.qflg[rgate,i] = 1
+            
+    if CALC_SIGMA:
+        for (i, fit) in enumerate(self.sfits[rgate]):
+            # calculate "sigma" parameters
+            np.append(self.sd_s[rgate],0) # TODO: what is a reasonable value for this? 
+             
+            self.w_s[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.tfreq * 1e3)) 
+
+            self.w_s_std[rgate,i] = (((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA)
+            self.w_s_e[rgate,i] = self.w_s_std[rgate,i] / np.sqrt(N)
+            
+            self.p_s[rgate,i] = fit['amplitude'] / self.noise
+            self.p_s_e[rgate,i] = np.sqrt((self.noise ** 2)/fit['amplitude_error_unscaled'])/self.noise # this may be scaled wrong..
+
+            v_s = (fit['frequency'] * C) / (2 * self.tfreq * 1e3)
+            self.v_s[rgate,i] = v_s
+
+            self.r2_phase_s[rgate, i] = fit['r2_phase']
+            self.fit_snr_s[rgate,i] = fit['fit_snr']
+            self.v_s_std[rgate,i] = ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA)
+            self.v_s_e[rgate,i] = self.v_s_std[rgate,i] / np.sqrt(N)
+
+        self.p_s[self.p_s <= 0] = np.nan 
+        self.p_s = 10 * np.log10(self.p_s)
+
 
     def CalcNoise(self):
         # take average of smallest ten powers at range gate 0 for lower bound on noise
@@ -466,12 +439,23 @@ if __name__ == '__main__':
     filtered=False
     src='local'
     channel=None
+    
+    lags = [.0015 * i for i in range(NLAGS)]
+
+    # create velocity and spectral width space based on maximum transmit frequency
+    amax = np.ceil((np.pi * 2 * MAX_TFREQ * MAX_W) / C)
+    fmax = np.ceil(MAX_V * 2 * MAX_TFREQ)
+    freqs = np.linspace(-fmax,fmax, NFREQS)
+    alfs = np.linspace(0, amax, NALFS)
+
+    gpu_lambda = BayesGPU(lags, freqs, alfs, MAXPULSES, LAMBDA_FIT)
+    #gpu_sigma = BayesGPU(lags, freqs, alfs, MAXPULSES, SIGMA_FIT)
 
     for radar_code in [args.radar]:
-        try:
+        #try:
 		for sday in days:
 		    for hoffset in hours:
-			try:
+			#try:
 				stime = sday + datetime.timedelta(hours = hoffset)
 				etime = sday + datetime.timedelta(hours = (hoffset + recordlen))
 				myPtr = sdio.radDataOpen(stime,radar_code,eTime=etime,channel=None,bmnum=None,cp=None,fileType=fileType,filtered=filtered, src=src)
@@ -479,7 +463,6 @@ if __name__ == '__main__':
 				outfilepath = DATA_DIR + stime.strftime('%Y/%m.%d/') 
 				if not os.path.exists(outfilepath):
 				    os.makedirs(outfilepath)
-				cubecache = TimeCube()
 				
 				hdf5file = h5py.File(outfilepath + outfilename, 'w')
 
@@ -488,18 +471,19 @@ if __name__ == '__main__':
 				drec = sdio.radDataReadRec(myPtr)
 
 				while drec != None:
-				    try:
-					fit = LombFit(drec)
-					fit.CudaProcessPulse()
+			#	    try:
+					fit = CULombFit(drec)
+					fit.CudaProcessPulse(gpu_lambda)
+                                        fit.CudaCopyPeaks(gpu_lambda)
 					fit.WriteLSSFit(hdf5file)
-				    except:
-					print 'error fitting file, skipping record..'
+			#	    except:
+			#		print 'error fitting file, skipping record..'
 
-				    drec = sdio.radDataReadRec(myPtr)
+				        drec = sdio.radDataReadRec(myPtr)
 
 				hdf5file.close() 
 
-			except:
-				print 'error ofitting block'
-        except:
-            print 'day failed..'
+			#except:
+			#	print 'error ofitting block'
+        #except:
+         #   print 'day failed..'

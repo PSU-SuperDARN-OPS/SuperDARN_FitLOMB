@@ -203,7 +203,7 @@ class BayesGPU:
        
         self.npulses = npulses
         self.nlags = np.int32(len(self.lags))
-        self.nalphas = np.int32(len(self.alfs))
+        self.nalfs = np.int32(len(self.alfs))
         self.nfreqs = np.int32(len(self.freqs))
       
         self.env_model = np.float32(env_model)
@@ -211,8 +211,8 @@ class BayesGPU:
         # do some sanity checks on the input parameters..
         if np.log2(self.nfreqs) != int(np.log2(self.nfreqs)):
             print 'ERROR: number of freqs should be a power of two'
-        
-        if self.nfreqs < self.alfs:
+
+        if self.nfreqs < self.nalfs:
             print 'ERROR: number of alfs should be less than number of freqs'
         
         if self.nfreqs > 1024:
@@ -224,18 +224,20 @@ class BayesGPU:
         if self.npulses <= 1:
             print 'ERROR: number of pulses must be at least 2'
 
-        # create matricies for 
+        # create matricies for processing
         ce_matrix, se_matrix, CS_f = make_spacecube(lags, freqs, alfs, env_model)
         ce_matrix_g = np.float32(np.swapaxes(ce_matrix,0,2)).flatten()
         se_matrix_g = np.float32(np.swapaxes(se_matrix,0,2)).flatten()
         CS_f_g = np.float32(np.swapaxes(CS_f,0,1).flatten())
-
+        
+        # create dummy matricies to allocate on GPU
         lagmask = np.int8(np.zeros([self.nlags, self.npulses]))
         R_f = np.float32(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
         I_f = np.float32(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
         hbar2 = np.float64(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
         P_f = np.float64(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
-            
+        samples = np.float32(np.zeros([self.npulses, 2 * self.nlags]))
+
         self.peaks = np.int32(np.zeros(self.npulses))
         self.alf_fwhm = np.int32(np.zeros(self.npulses))
         self.freq_fwhm = np.int32(np.zeros(self.npulses))
@@ -243,7 +245,7 @@ class BayesGPU:
 
         # allocate space on GPU 
         self.samples_gpu = cuda.mem_alloc(samples.nbytes)
-        self.lagmask.gpu = cuda.mem_alloc(lagmask.nbytes)
+        self.lagmask_gpu = cuda.mem_alloc(lagmask.nbytes)
         self.ce_gpu = cuda.mem_alloc(ce_matrix_g.nbytes)
         self.se_gpu = cuda.mem_alloc(se_matrix_g.nbytes)
         self.CS_f_gpu = cuda.mem_alloc(CS_f.nbytes)
@@ -268,14 +270,13 @@ class BayesGPU:
 
     def run_bayesfit(self, samples, lagmask):
         # TODO: fix sample interleaving
-        samples=np.tile(np.float32(list(chain.from_iterable(izip(np.real(signal), np.imag(signal))))), CUDA_GRID)
-
+        lagmask = np.int8(lagmask)
         cuda.memcpy_htod(self.samples_gpu, samples)
         cuda.memcpy_htod(self.lagmask_gpu, lagmask)
-
-        calc_bayes(self.samples_gpu, self.lagmask_gpu, self.ce_gpu, self.se_gpu, self.CS_f_gpu, self.R_f_gpu, self.I_f_gpu, self.hbar2_gpu, self.P_f_gpu, self.env_model, self.lags, self.nalphas,  block = (int(self.nfreqs),1,1), grid = (self.npulses,1,1))
-        find_peaks(P_f_gpu, peaks_gpu, nalphas, block = (int(self.nfreqs),1,1), grid = (self.npulses,1))
-        process_peaks(self.P_f_gpu, self.R_f_gpu, self.I_f_gpu, self.CS_f_gpu, self.peaks_gpu, self.nfreqs, self.nalphas, self.alf_fwhm_gpu, self.freq_fwhm_gpu, self.amplitudes_gpu, block = (self.npulses,1,1))
+        pdb.set_trace()
+        self.calc_bayes(self.samples_gpu, self.lagmask_gpu, self.ce_gpu, self.se_gpu, self.CS_f_gpu, self.R_f_gpu, self.I_f_gpu, self.hbar2_gpu, self.P_f_gpu, self.env_model, self.lags, self.nalfs,  block = (int(self.nfreqs),1,1), grid = (self.npulses,1,1))
+        self.find_peaks(P_f_gpu, peaks_gpu, nalphas, block = (int(self.nfreqs),1,1), grid = (self.npulses,1))
+        self.process_peaks(self.P_f_gpu, self.R_f_gpu, self.I_f_gpu, self.CS_f_gpu, self.peaks_gpu, self.nfreqs, self.nalfs, self.alf_fwhm_gpu, self.freq_fwhm_gpu, self.amplitudes_gpu, block = (self.npulses,1,1))
 
         cuda.memcpy_dtoh(self.amplitudes, self.amplitudes_gpu)
         cuda.memcpy_dtoh(self.alf_fwhm, self.alf_fwhm_gpu)
