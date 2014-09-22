@@ -6,17 +6,18 @@ import pycuda.autoinit
 import numpy as np
 import numexpr as ne
 from itertools import chain, izip
+import time
+from timecube import make_spacecube
 
 # debugging imports
 import pdb
 import matplotlib.pyplot as plt
-import time
-# todo: 
-#       add second moment based error calculations
+# todo: add second moment based error calculations
 
-from timecube import make_spacecube
+C = 3e8
+FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
+
 mod = pycuda.compiler.SourceModule("""
-
 #include <stdio.h>
 #include <stdint.h>
 
@@ -31,7 +32,7 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
 {
     int32_t t, i, sample_offset, samplebase;
     double dbar2 = 0;
-    int32_t n_good_samples;
+    int32_t n_good_samples = 0;
 
     __shared__ float s_samples[MAX_SAMPLES * 2];
     __shared__ int8_t s_lags[MAX_SAMPLES];
@@ -43,7 +44,6 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
         sample_offset = threadIdx.x + i * blockDim.x;
         if(sample_offset < nsamples) {
             s_lags[sample_offset] = (lags[samplebase + sample_offset] != 0);
-        
         }
     }
     __syncthreads(); 
@@ -65,7 +65,7 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
             n_good_samples++;
         }
     }
-
+    
     // parallel cache cs_f to shared memory (assumes nfreqs > nalphas!!!)
     if(threadIdx.x < nalphas) {
         s_cs_f[threadIdx.x] = cs_f[threadIdx.x];
@@ -85,7 +85,6 @@ __global__ void calc_bayes(float *samples, float *lags, float *ce_matrix, float 
         int32_t RI_offset = (blockIdx.x * blockDim.x * nalphas) + (i * blockDim.x) + threadIdx.x;
         R_f[RI_offset] = 0;
         I_f[RI_offset] = 0;
-        // TODO: if T is a good lag..
         for(t = 0; t < nsamples; t++) {
             int32_t CS_offset = (i * blockDim.x * nsamples) + (t * blockDim.x) + threadIdx.x;
             sample_offset = 2*t;
@@ -195,7 +194,117 @@ def calculate_bayes(s, t, f, alfs, env_model, ce_matrix, se_matrix, CS_f):
     
     P_f = np.log10(N * dbar2 - hbar2)  * ((2 - N) / 2.) - np.log10(CS_f)
     return R_f, I_f, hbar2, P_f
-   
+
+class BayesGPU:
+    def __init__(self, lags, freqs, alfs, npulses, env_model):
+        self.lags = np.array(lags)
+        self.freqs = np.array(freqs)
+        self.alfs = np.array(alfs)
+       
+        self.npulses = npulses
+        self.nlags = np.int32(len(self.lags))
+        self.nalphas = np.int32(len(self.alfs))
+        self.nfreqs = np.int32(len(self.freqs))
+      
+        self.env_model = np.float32(env_model)
+
+        # do some sanity checks on the input parameters..
+        if np.log2(self.nfreqs) != int(np.log2(self.nfreqs)):
+            print 'ERROR: number of freqs should be a power of two'
+        
+        if self.nfreqs < self.alfs:
+            print 'ERROR: number of alfs should be less than number of freqs'
+        
+        if self.nfreqs > 1024:
+            print 'ERROR: number of frequencies exceeds maximum thread size'
+         
+        if self.npulses > 1024:
+            print 'ERROR: number of pulses exceeds maximum thread size'
+         
+        if self.npulses <= 1:
+            print 'ERROR: number of pulses must be at least 2'
+
+        # create matricies for 
+        ce_matrix, se_matrix, CS_f = make_spacecube(lags, freqs, alfs, env_model)
+        ce_matrix_g = np.float32(np.swapaxes(ce_matrix,0,2)).flatten()
+        se_matrix_g = np.float32(np.swapaxes(se_matrix,0,2)).flatten()
+        CS_f_g = np.float32(np.swapaxes(CS_f,0,1).flatten())
+
+        lagmask = np.int8(np.zeros([self.nlags, self.npulses]))
+        R_f = np.float32(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
+        I_f = np.float32(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
+        hbar2 = np.float64(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
+        P_f = np.float64(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
+            
+        self.peaks = np.int32(np.zeros(self.npulses))
+        self.alf_fwhm = np.int32(np.zeros(self.npulses))
+        self.freq_fwhm = np.int32(np.zeros(self.npulses))
+        self.amplitudes = np.float64(np.zeros(self.npulses))
+
+        # allocate space on GPU 
+        self.samples_gpu = cuda.mem_alloc(samples.nbytes)
+        self.lagmask.gpu = cuda.mem_alloc(lagmask.nbytes)
+        self.ce_gpu = cuda.mem_alloc(ce_matrix_g.nbytes)
+        self.se_gpu = cuda.mem_alloc(se_matrix_g.nbytes)
+        self.CS_f_gpu = cuda.mem_alloc(CS_f.nbytes)
+        self.R_f_gpu = cuda.mem_alloc(R_f.nbytes)
+        self.I_f_gpu = cuda.mem_alloc(I_f.nbytes)
+        self.hbar2_gpu  = cuda.mem_alloc(hbar2.nbytes)
+        self.P_f_gpu = cuda.mem_alloc(P_f.nbytes)
+        self.peaks_gpu = cuda.mem_alloc(self.peaks.nbytes)
+        self.alf_fwhm_gpu = cuda.mem_alloc(self.alf_fwhm.nbytes)
+        self.freq_fwhm_gpu = cuda.mem_alloc(self.freq_fwhm.nbytes)
+        self.amplitudes_gpu = cuda.mem_alloc(self.amplitudes.nbytes)
+        
+        # copy ce/se/cs matricies over to GPU
+        cuda.memcpy_htod(self.ce_gpu, ce_matrix_g)
+        cuda.memcpy_htod(self.se_gpu, se_matrix_g)
+        cuda.memcpy_htod(self.CS_f_gpu, CS_f_g)
+    
+        # get cuda source modules
+        self.calc_bayes = mod.get_function('calc_bayes')
+        self.find_peaks = mod.get_function('find_peaks')
+        self.process_peaks = mod.get_function('process_peaks')
+
+    def run_bayesfit(self, samples, lagmask):
+        # TODO: fix sample interleaving
+        samples=np.tile(np.float32(list(chain.from_iterable(izip(np.real(signal), np.imag(signal))))), CUDA_GRID)
+
+        cuda.memcpy_htod(self.samples_gpu, samples)
+        cuda.memcpy_htod(self.lagmask_gpu, lagmask)
+
+        calc_bayes(self.samples_gpu, self.lagmask_gpu, self.ce_gpu, self.se_gpu, self.CS_f_gpu, self.R_f_gpu, self.I_f_gpu, self.hbar2_gpu, self.P_f_gpu, self.env_model, self.lags, self.nalphas,  block = (int(self.nfreqs),1,1), grid = (self.npulses,1,1))
+        find_peaks(P_f_gpu, peaks_gpu, nalphas, block = (int(self.nfreqs),1,1), grid = (self.npulses,1))
+        process_peaks(self.P_f_gpu, self.R_f_gpu, self.I_f_gpu, self.CS_f_gpu, self.peaks_gpu, self.nfreqs, self.nalphas, self.alf_fwhm_gpu, self.freq_fwhm_gpu, self.amplitudes_gpu, block = (self.npulses,1,1))
+
+        cuda.memcpy_dtoh(self.amplitudes, self.amplitudes_gpu)
+        cuda.memcpy_dtoh(self.alf_fwhm, self.alf_fwhm_gpu)
+        cuda.memcpy_dtoh(self.freq_fwhm, self.freq_fwhm_gpu)
+        cuda.memcpy_dtoh(self.peaks, self.peaks_gpu)
+
+    def process_bayesfit(self, tfreq, noise):
+        dalpha = self.alfs[1] - self.alfs[0]
+        dfreqs = self.freqs[1] - self.freqs[0]
+        
+        # TODO: calculate n_good_lags
+        # TODO: calculate SNR
+        N = 2 * self.nlags # n_good_lags
+
+        self.w_l = dalpha * (C * self.alf_fwhm) / (2. * np.pi * (tfreq * 1e3))
+        self.w_l_std = dalpha * (((C * self.alf_fwhm) / (2. * np.pi * (tfreq * 1e3))) / FWHM_TO_SIGMA)
+        self.w_l_e = self.w_l_std / np.sqrt(N)
+
+        self.v_l = dfreqs * (self.freq_fwhm * C) / (2 * self.tfreq * 1e3)
+        self.v_l_std = dfreqs * ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA)
+        self.v_l_e = self.v_l_std / np.sqrt(N)
+
+        #self.fit_snr_l[rgate,i] = fit['fit_snr']
+
+        self.p_l = self.amplitudes / noise
+        self.p_l[self.p_l <= 0] = np.nan
+        self.p_l = 10 * np.log10(self.p_l)
+
+        
 #@profile
 # kernprof -l cuda_bayes.py
 #python -m line_profiler script_to_profile.py.lprof
@@ -211,7 +320,7 @@ def main():
     lags = np.arange(0, 25) * ts
     times=[]
     signal=[]
-    CUDA_GRID = 225 
+    CUDA_GRID = 225
 
     for i in xrange(num_records):
       F=f[0]+0.1*np.random.randn()+float(i-num_records/2)/float(num_records)*.1*f[0]
@@ -309,8 +418,8 @@ def main():
     print 'gpu: ' + str(gpu_end - gpu_start)
     print 'cpu: ' + str(cpu_end - cpu_start)
 
+    cuda.memcpy_dtoh(P_f, P_f_gpu)
     # compare..
-    '''
     plt.subplot(411)
     plt.imshow(P_f[0], interpolation="nearest")
     plt.subplot(412)
@@ -323,7 +432,6 @@ def main():
 
     plt.show()
     pdb.set_trace()
-    '''
 
 if __name__ == '__main__':
     main()
