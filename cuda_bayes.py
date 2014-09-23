@@ -23,7 +23,7 @@ mod = pycuda.compiler.SourceModule("""
 
 #define REAL 0
 #define IMAG 1
-#define MAX_SAMPLES 30 
+#define MAX_SAMPLES 25
 #define MAX_ALPHAS 128 // MUST BE A POWER OF 2
 #define MAX_FREQS 256 // MUST BE A POWER OF 2
 
@@ -273,10 +273,9 @@ class BayesGPU:
         lagmask = np.int8(lagmask)
         cuda.memcpy_htod(self.samples_gpu, samples)
         cuda.memcpy_htod(self.lagmask_gpu, lagmask)
-        pdb.set_trace()
-        self.calc_bayes(self.samples_gpu, self.lagmask_gpu, self.ce_gpu, self.se_gpu, self.CS_f_gpu, self.R_f_gpu, self.I_f_gpu, self.hbar2_gpu, self.P_f_gpu, self.env_model, self.lags, self.nalfs,  block = (int(self.nfreqs),1,1), grid = (self.npulses,1,1))
-        self.find_peaks(P_f_gpu, peaks_gpu, nalphas, block = (int(self.nfreqs),1,1), grid = (self.npulses,1))
-        self.process_peaks(self.P_f_gpu, self.R_f_gpu, self.I_f_gpu, self.CS_f_gpu, self.peaks_gpu, self.nfreqs, self.nalfs, self.alf_fwhm_gpu, self.freq_fwhm_gpu, self.amplitudes_gpu, block = (self.npulses,1,1))
+        self.calc_bayes(self.samples_gpu, self.lagmask_gpu, self.ce_gpu, self.se_gpu, self.CS_f_gpu, self.R_f_gpu, self.I_f_gpu, self.hbar2_gpu, self.P_f_gpu, self.env_model, self.nlags, self.nalfs,  block = (int(self.nfreqs),1,1), grid = (int(self.npulses),1,1))
+        self.find_peaks(self.P_f_gpu, self.peaks_gpu, self.nalfs, block = (int(self.nfreqs),1,1), grid = (int(self.npulses),1))
+        self.process_peaks(self.P_f_gpu, self.R_f_gpu, self.I_f_gpu, self.CS_f_gpu, self.peaks_gpu, self.nfreqs, self.nalfs, self.alf_fwhm_gpu, self.freq_fwhm_gpu, self.amplitudes_gpu, block = (int(self.npulses),1,1))
 
         cuda.memcpy_dtoh(self.amplitudes, self.amplitudes_gpu)
         cuda.memcpy_dtoh(self.alf_fwhm, self.alf_fwhm_gpu)
@@ -289,16 +288,21 @@ class BayesGPU:
         
         # TODO: calculate n_good_lags
         # TODO: calculate SNR
-        N = 2 * self.nlags # n_good_lags
+        N = 2 * self.nlags # TODO: this should be n_good_lags
+        
+        # TODO: shouldn't be freq_fwhm, should be max freq at peak..
+        w_l_idx = ((self.peaks - (self.peaks % self.nfreqs)) % (self.nfreqs * self.nalfs)) / self.nfreqs
+        v_l_idx = self.peaks % self.nfreqs
 
-        self.w_l = dalpha * (C * self.alf_fwhm) / (2. * np.pi * (tfreq * 1e3))
+        self.w_l = (self.alfs[w_l_idx] * C) / (2. * np.pi * (tfreq * 1e3))
         self.w_l_std = dalpha * (((C * self.alf_fwhm) / (2. * np.pi * (tfreq * 1e3))) / FWHM_TO_SIGMA)
         self.w_l_e = self.w_l_std / np.sqrt(N)
-
-        self.v_l = dfreqs * (self.freq_fwhm * C) / (2 * self.tfreq * 1e3)
-        self.v_l_std = dfreqs * ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA)
+        
+        self.v_l = (self.freqs[v_l_idx] * C) / (2 * tfreq * 1e3)
+        self.v_l_std = dfreqs * ((((self.freq_fwhm) * C) / (2 * tfreq * 1e3)) / FWHM_TO_SIGMA)
         self.v_l_e = self.v_l_std / np.sqrt(N)
 
+        pdb.set_trace()
         #self.fit_snr_l[rgate,i] = fit['fit_snr']
 
         self.p_l = self.amplitudes / noise

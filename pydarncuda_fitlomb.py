@@ -32,7 +32,7 @@ MAX_W = 1200 # m/s, max spectral width to include in lomb
 NFREQS = 256
 NALFS = 128
 NLAGS = 25
-MAXPULSES = 225
+MAXPULSES = 100
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
 SNR_THRESH = 1 # ratio of power in fitted signal and residual 
@@ -83,6 +83,7 @@ GROUP_ATTR_TYPES = {\
         'xcf':np.int8}
 
 class CULombFit:
+    #@profile
     def __init__(self, record):
         self.rawacf = record # dictionary copy of RawACF record
         self.mplgs = self.rawacf.prm.mplgs # range of lags
@@ -118,7 +119,7 @@ class CULombFit:
         self.vimax_thresh = MAX_V - 100
         self.vimin_thresh = 100
         
-        self.maxfreqs = NFREQS
+        self.maxfreqs = 1
         # initialize empty arrays for fitted parameters 
         self.lfits      = [[] for r in self.ranges]
         self.sfits      = [[] for r in self.ranges]
@@ -154,8 +155,7 @@ class CULombFit:
         self.qflg       = np.zeros([self.nrang, self.maxfreqs])
 
         self.nlag       = np.zeros([self.nrang])
-        
-        self.CalcBadlags()
+        self.CalcBadlags() # TODO: about 1/3 of execution time spent here 
         self.CalcNoise()
  
     # appends a record of the lss fit to an hdf5 file
@@ -200,7 +200,6 @@ class CULombFit:
         # copy over vectors from rawacf
         add_compact_dset(hdf5file, groupname, 'ptab', np.int16(self.ptab), h5py.h5t.STD_I16BE)
         add_compact_dset(hdf5file, groupname, 'ltab', np.int16(self.ltab), h5py.h5t.STD_I16BE)
-        q
         add_compact_dset(hdf5file, groupname, 'pwr0', np.int32(self.pwr0), h5py.h5t.STD_I32BE)
         
         # add calculated parameters
@@ -231,13 +230,15 @@ class CULombFit:
             add_compact_dset(hdf5file, groupname, 'v_s_std', np.float64(self.v_s_std), h5py.h5t.NATIVE_DOUBLE)
             add_compact_dset(hdf5file, groupname, 'fit_snr_s', np.float64(self.fit_snr_s), h5py.h5t.NATIVE_DOUBLE)
             add_compact_dset(hdf5file, groupname, 'r2_phase_s', np.float64(self.r2_phase_s), h5py.h5t.NATIVE_DOUBLE)
-    
+
+#    @profile 
     def CudaProcessPulse(self, gpu):
         # TODO: create samples and lagmask 
         # TODO: check time resolution and frequency band, see if we need to regenerate ce/se matricies
         lagsmask = [] 
         isamples = []
 
+        # TODO: about 15% of execution time spent here
         for r in self.ranges:
             times, samples = self._CalcSamples(r)
             lmask = [l in times for l in gpu.lags]
@@ -259,11 +260,9 @@ class CULombFit:
 
         lagsmask = np.int8(np.array(lagsmask))
         isamples = np.float32(np.array(isamples))
-        gpu.run_bayesfit(isamples, lagsmask)
+        gpu.run_bayesfit(isamples, lagsmask) # TODO: calculate only on good lags for ~50% speedup?
         gpu.process_bayesfit(self.tfreq, self.noise)
 
-
-   
     # get time and good complex samples for a range gate
     def _CalcSamples(self, rgate):
         offset = self.mplgs * rgate
@@ -287,7 +286,8 @@ class CULombFit:
 
     def CudaCopyPeaks(self, gpu):
         # compute velocity, width, and power for each peak with "sigma" and "lambda" fits
-        N = 2 * len(fit['t'])  
+        # TODO: calculate t array with number of good lags..
+        N = 2 * 25#len(fit['t'])  
 
         self.w_l = gpu.w_l 
         self.w_l_std = gpu.w_l_std
@@ -307,10 +307,10 @@ class CULombFit:
         self.v_l = gpu.v_l 
         self.v_l_std = gpu.v_l_std
         self.v_l_e = gpu.v_l_e
-        
-        self.iflg = (abs(v_l) - (self.v_thresh - (self.v_thresh / self.w_thresh) * abs(self.w_l[rgate, i])) > 0) 
-        
+            
         for rgate in self.ranges:
+            '''
+            #self.iflg = (abs(self.v_l) - (self.v_thresh - (self.v_thresh / self.w_thresh) * abs(self.w_l[rgate, i])) > 0) 
             i = 0
             # set qflg if .. signal to noise ratios are high enough, not stuck 
             if self.p_l[rgate,i] > self.qpwr_thresh and \
@@ -322,7 +322,7 @@ class CULombFit:
                     self.fit_snr_l[rgate, i] <= self.snr_thresh and \
                     self.v_l[rgate, i] > -self.vimax_thresh:
                 self.qflg[rgate,i] = 1
-            
+           ''' 
     if CALC_SIGMA:
         for (i, fit) in enumerate(self.sfits[rgate]):
             # calculate "sigma" parameters
@@ -413,8 +413,8 @@ def add_compact_dset(hdf5file, group, dsetname, data, dtype, mask = []):
     dset = h5py.h5d.create(hdf5file.id, dsetname, dtype, space_id, dcpl)
     dset.write(h5py.h5s.ALL, h5py.h5s.ALL, data)
 
-
-if __name__ == '__main__':
+#@profile
+def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
     parser.add_argument("--infile", help="input RawACF file to convert")
@@ -422,13 +422,13 @@ if __name__ == '__main__':
     parser.add_argument("--starttime", help="input RawACF file to convert")
     parser.add_argument("--endtime", help="input RawACF file to convert")
     parser.add_argument("--pulses", help="calculate lomb over multiple pulses", default=1) 
-    parser.add_argument("--radar", help="radar to create data from", default='kod.c') 
+    parser.add_argument("--radar", help="radar to create data from", default='ksr.a') 
 
     args = parser.parse_args() 
     args.pulses = int(args.pulses)
 
     # ksr, kod, pgr, ade, cvw 
-    recordlen = .1
+    recordlen = 2 
     #days = [datetime.datetime(2014,3,1), datetime.datetime(2014,3,2), datetime.datetime(2014,3,4), datetime.datetime(2014,3,6)]
     days = [datetime.datetime(2014,3,1)]
     #hours = range(0, 24, recordlen) 
@@ -472,14 +472,14 @@ if __name__ == '__main__':
 
 				while drec != None:
 			#	    try:
-					fit = CULombFit(drec)
-					fit.CudaProcessPulse(gpu_lambda)
-                                        fit.CudaCopyPeaks(gpu_lambda)
-					fit.WriteLSSFit(hdf5file)
+					fit = CULombFit(drec) # 30 %
+					fit.CudaProcessPulse(gpu_lambda) # 50 %
+                                        fit.CudaCopyPeaks(gpu_lambda) 
+					fit.WriteLSSFit(hdf5file) # 4 %
 			#	    except:
 			#		print 'error fitting file, skipping record..'
-
-				        drec = sdio.radDataReadRec(myPtr)
+                                        print fit.recordtime
+				        drec = sdio.radDataReadRec(myPtr) # 16 %
 
 				hdf5file.close() 
 
@@ -487,3 +487,8 @@ if __name__ == '__main__':
 			#	print 'error ofitting block'
         #except:
          #   print 'day failed..'
+
+if __name__ == '__main__':
+    main()
+
+
