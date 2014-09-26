@@ -444,10 +444,11 @@ def main():
 
     # create velocity and spectral width space based on maximum transmit frequency
     amax = np.ceil((np.pi * 2 * MAX_TFREQ * MAX_W) / C)
-    fmax = np.ceil(MAX_V * 2 * MAX_TFREQ)
+    fmax = np.ceil(MAX_V * 2 * MAX_TFREQ / C)
+
     freqs = np.linspace(-fmax,fmax, NFREQS)
     alfs = np.linspace(0, amax, NALFS)
-
+    
     gpu_lambda = BayesGPU(lags, freqs, alfs, MAXPULSES, LAMBDA_FIT)
     #gpu_sigma = BayesGPU(lags, freqs, alfs, MAXPULSES, SIGMA_FIT)
 

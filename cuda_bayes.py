@@ -302,7 +302,6 @@ class BayesGPU:
         self.v_l_std = dfreqs * ((((self.freq_fwhm) * C) / (2 * tfreq * 1e3)) / FWHM_TO_SIGMA)
         self.v_l_e = self.v_l_std / np.sqrt(N)
 
-        pdb.set_trace()
         #self.fit_snr_l[rgate,i] = fit['fit_snr']
 
         self.p_l = self.amplitudes / noise
@@ -436,7 +435,6 @@ def main():
     plt.imshow(P_f[0] - P_f_cpu, interpolation="nearest")
 
     plt.show()
-    pdb.set_trace()
 
 if __name__ == '__main__':
     main()
