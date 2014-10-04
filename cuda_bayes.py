@@ -147,7 +147,7 @@ __global__ void find_peaks(double *P_f, int32_t *peaks, int32_t nalphas)
 }
 
 // thread for each pulse, find fwhm and calculate ampltitude
-__global__ void process_peaks(double *P_f, float *R_f, float *I_f, float *CS_f, double *dbar2, float *snr, float *cs_lagpwr, int32_t *peaks, int32_t nfreqs, int32_t nalphas, int32_t nlags, int32_t *alphafwhm, int32_t *freqfwhm, double *amplitudes) 
+__global__ void process_peaks(double *P_f, float *R_f, float *I_f, float *CS_f, double *dbar2, float *snr, int32_t *lagmask, int32_t *n_good_lags, float *cs_lagpwr, int32_t *peaks, int32_t nfreqs, int32_t nalphas, int32_t nlags, int32_t *alphafwhm, int32_t *freqfwhm, double *amplitudes) 
 {
     int32_t peakidx = peaks[threadIdx.x];
     int32_t i;
@@ -193,11 +193,11 @@ __global__ void process_peaks(double *P_f, float *R_f, float *I_f, float *CS_f, 
     // calculate mean power per sample in fitted waveform
     // cs_lagpwr is sqrt(ce_matrix ** 2 + se_matrix ** 2)
     for(i = 0; i < nlags; i++) {
-        fitpwr += lagmask[threadIdx.x * nlags + i] * cs_lagpwr[peakidx + i] 
+        fitpwr += lagmask[threadIdx.x * nlags + i] * cs_lagpwr[peakidx + i];
     }
     fitpwr /= n_good_lags[threadIdx.x];
 
-    snr[threadIdx.x] = sigpower / (2 * dbar2);
+    snr[threadIdx.x] = sigpower[peak] / (2 * dbar2);
 
 }
 """)
@@ -306,7 +306,7 @@ class BayesGPU:
         cuda.memcpy_htod(self.lagmask_gpu, lagmask)
         self.calc_bayes(self.samples_gpu, self.lagmask_gpu, self.ce_gpu, self.se_gpu, self.CS_f_gpu, self.R_f_gpu, self.I_f_gpu, self.hbar2_gpu, self.P_f_gpu, self.env_model, self.nlags, self.nalfs, self.dbar2_gpu, self.n_good_lags_gpu, block = (int(self.nfreqs),1,1), grid = (int(self.npulses),1,1))
         self.find_peaks(self.P_f_gpu, self.peaks_gpu, self.nalfs, block = (int(self.nfreqs),1,1), grid = (int(self.npulses),1))
-        self.process_peaks(self.P_f_gpu, self.R_f_gpu, self.I_f_gpu, self.CS_f_gpu, self.dbar2_gpu, self.snr_gpu, self.cs_lagpwr_gpu, self.peaks_gpu, self.nfreqs, self.nalfs, self.nlags, self.alf_fwhm_gpu, self.freq_fwhm_gpu, self.amplitudes_gpu, block = (int(self.npulses),1,1))
+        self.process_peaks(self.P_f_gpu, self.R_f_gpu, self.I_f_gpu, self.CS_f_gpu, self.dbar2_gpu, self.snr_gpu, self.lagmask_gpu, self.n_good_lags_gpu, self.cs_lagpwr_gpu, self.peaks_gpu, self.nfreqs, self.nalfs, self.nlags, self.alf_fwhm_gpu, self.freq_fwhm_gpu, self.amplitudes_gpu, block = (int(self.npulses),1,1))
 
         cuda.memcpy_dtoh(self.amplitudes, self.amplitudes_gpu)
         cuda.memcpy_dtoh(self.alf_fwhm, self.alf_fwhm_gpu)
