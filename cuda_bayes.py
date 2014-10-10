@@ -195,7 +195,6 @@ __global__ void process_peaks(double *P_f, float *R_f, float *I_f, float *CS_f, 
     for(i = 0; i < nlags; i++) {
         fitpwr += lagmask[threadIdx.x * nlags + i] * cs_lagpwr[cs_lagpwr_idx + i];
     }
-
     fitpwr /= n_good_lags[threadIdx.x];
     fitpwr *= pow(((float) amplitudes[threadIdx.x]) / 2, 2); // scale cached cs_lagpwr for calculated amplitude (TODO: TEST..)
     snr[threadIdx.x] = fitpwr / (2 * dbar2[threadIdx.x]);
