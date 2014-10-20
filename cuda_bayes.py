@@ -192,6 +192,7 @@ __global__ void process_peaks(double *P_f, float *R_f, float *I_f, float *CS_f, 
     int32_t cs_lagpwr_idx = (peakidx % (nfreqs * nalphas)) * nlags;
     
     // calculate mean power in fitted signal
+    // incorrect.. should be ratio of fitted signal and samples without fitted signal
     for(i = 0; i < nlags; i++) {
         fitpwr += lagmask[threadIdx.x * nlags + i] * cs_lagpwr[cs_lagpwr_idx + i];
     }

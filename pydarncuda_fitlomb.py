@@ -5,7 +5,7 @@
 # TODO: move raw data to ARSC, process on their machines
 # TODO: look at residual spread of fitacf and fitlomb to samples
 # TODO: look at variance of residual, compare with fitacf
-
+# TODO: fix nlag, qflg, and snr
 import argparse
 import pydarn.sdio as sdio
 import datetime, calendar
@@ -235,8 +235,8 @@ class CULombFit:
     def CudaProcessPulse(self, gpu):
         # TODO: create samples and lagmask 
         # TODO: check time resolution and frequency band, see if we need to regenerate ce/se matricies
-        lagsmask = [] 
-        isamples = []
+        lagsmask = []
+        isamples = np.zeros([self.nranges, 2 * gpu.nlags])
 
         # TODO: about 15% of execution time spent here
         for r in self.ranges:
@@ -245,23 +245,19 @@ class CULombFit:
             lagsmask.append(lmask)
             
             # create interleaved samples array (todo: don't calculate bad samples for ~2x speedup)
-            psamples = []
             i = 0
-            for l in lmask:
-                if(l == 0):
-                    psamples.append(0)
-                    psamples.append(0)
-                else:
-                    psamples.append(np.real(samples[i]))
-                    psamples.append(np.imag(samples[i]))
+            for (j,l) in enumerate(lmask):
+                if l:
+                    isamples[r,2*j] = np.real(samples[i]))
+                    isamples[r,2*j+1] = np.imag(samples[i]))
                     i = i + 1
 
-            isamples.append(psamples)      
-
+        
         lagsmask = np.int8(np.array(lagsmask))
         isamples = np.float32(np.array(isamples))
         gpu.run_bayesfit(isamples, lagsmask) # TODO: calculate only on good lags for ~50% speedup?
         gpu.process_bayesfit(self.tfreq, self.noise)
+
 
     # get time and good complex samples for a range gate
     def _CalcSamples(self, rgate):
@@ -307,7 +303,7 @@ class CULombFit:
         self.v_l = gpu.v_l 
         self.v_l_std = gpu.v_l_std
         self.v_l_e = gpu.v_l_e
-            
+        
         for rgate in self.ranges:
             '''
             #self.iflg = (abs(self.v_l) - (self.v_thresh - (self.v_thresh / self.w_thresh) * abs(self.w_l[rgate, i])) > 0) 
@@ -390,11 +386,11 @@ class CULombFit:
                     lagpowers = abs(samples) ** 2
 
                     bad_lags[rgate] += (lagpowers > (lagpowers[0] * 2.0))# add interference lags
-		    self.nlag[rgate] = len(bad_lags[rgate]) - sum(bad_lags[rgate])
                 else:
                     # if lag zero is bad, we can't filter out lags greater than lag zero because we don't know what it is..
                     pass 
 
+        self.nlag[rgate] = len(bad_lags[rgate]) - sum(bad_lags[rgate])
         self.bad_lags = bad_lags 
 
 # create a COMPACT type h5py dataset using low level API...
@@ -431,8 +427,9 @@ def main():
     recordlen = 2 
     #days = [datetime.datetime(2014,3,1), datetime.datetime(2014,3,2), datetime.datetime(2014,3,4), datetime.datetime(2014,3,6)]
     days = [datetime.datetime(2014,3,1)]
-    #hours = range(0, 24, recordlen) 
-    hours = [0]
+    hours = range(20, 22, recordlen) 
+    #hours = [0]
+    #
     
     # boilerplate..
     fileType='rawacf'
