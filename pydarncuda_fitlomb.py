@@ -236,7 +236,7 @@ class CULombFit:
         # TODO: create samples and lagmask 
         # TODO: check time resolution and frequency band, see if we need to regenerate ce/se matricies
         lagsmask = []
-        isamples = np.zeros([self.nranges, 2 * gpu.nlags])
+        isamples = np.zeros([len(self.ranges), 2 * gpu.nlags])
 
         # TODO: about 15% of execution time spent here
         for r in self.ranges:
@@ -248,8 +248,8 @@ class CULombFit:
             i = 0
             for (j,l) in enumerate(lmask):
                 if l:
-                    isamples[r,2*j] = np.real(samples[i]))
-                    isamples[r,2*j+1] = np.imag(samples[i]))
+                    isamples[r,2*j] = np.real(samples[i])
+                    isamples[r,2*j+1] = np.imag(samples[i])
                     i = i + 1
 
         
