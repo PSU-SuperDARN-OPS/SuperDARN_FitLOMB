@@ -18,21 +18,21 @@ from itertools import chain, izip
 from cuda_bayes import BayesGPU
 
 FITLOMB_REVISION_MAJOR = 2
-FITLOMB_REVISION_MINOR = 0
+FITLOMB_REVISION_MINOR = 1
 ORIGIN_CODE = 'pydarncuda_fitlomb.py'
-DATA_DIR = './cudatmpdata/'
+DATA_DIR = '/raid0/tmp/fitlomb/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
 
 I_OFFSET = 0
 Q_OFFSET = 1
 
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
-MAX_V = 1500 # m/s, max velocity (doppler shift) to include in lomb
-MAX_W = 1200 # m/s, max spectral width to include in lomb 
+MAX_V = 2000 # m/s, max velocity (doppler shift) to include in lomb
+MAX_W = 1500 # m/s, max spectral width to include in lomb 
 NFREQS = 256
 NALFS = 128
 NLAGS = 25
-MAXPULSES = 100
+MAXPULSES = 300
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
 SNR_THRESH = 1 # ratio of power in fitted signal and residual 

@@ -15,7 +15,7 @@ from pytz import timezone
 
 BEAMS = 16
 MAX_LOMBDEPTH = 1
-DATADIR = '/mnt/flash/sddata/fitlomb/2014/02.26/'
+DATADIR = '/home/radar/repos/SuperDARN_FitLOMB/cudatmpdata/'
 PLOTDIR = './plots/'
 VEL_CMAP = plt.cm.RdBu
 FREQ_CMAP = plt.cm.spectral
