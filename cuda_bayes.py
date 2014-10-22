@@ -4,7 +4,6 @@ import pycuda.gpuarray as gpuarray
 import pycuda.compiler
 import pycuda.autoinit
 import numpy as np
-import numexpr as ne
 from itertools import chain, izip
 import time
 from timecube import make_spacecube
@@ -186,15 +185,20 @@ __global__ void process_peaks(float *samples, float *lag_times, float *freqs, fl
     for(i = peakidx; i < pulse_upperbound && P_f[i] > factor; i+=nfreqs) {
         afwhm++; 
     } 
+    __syncthreads();  
+
     for(i = peakidx; i >= pulse_lowerbound && P_f[i] > factor; i-=nfreqs) {
         afwhm++; 
     }
+    __syncthreads();  
+
     // find freq fwhm
     // don't care about fixing edge cases with peak on max or min freq, they are thrown as non-quality fits anyways
     for(i = peakidx; i % nfreqs != 0 && P_f[i] > factor; i++) {
         ffwhm++; 
     }
-     
+    __syncthreads();  
+
     for(i = peakidx; i % nfreqs != 0 && P_f[i] > factor; i--) {
         ffwhm++; 
     }
@@ -209,40 +213,25 @@ __global__ void process_peaks(float *samples, float *lag_times, float *freqs, fl
     freqfwhm[threadIdx.x] = ffwhm;
     amplitudes[threadIdx.x] = peakamp;
     
-    // on each peak-thread, calculate fitted signal
+    // on each peak-thread, calculate fitted signal, fitted signal power, and remaining power
     for (i = 0; i < nlags; i++) {
+        int32_t samplebase = threadIdx.x * nlags * 2; 
+
         float envelope = peakamp * exp(-peakalf * s_times[i]); 
         float angle = 2 * PI * peakfreq * s_times[i];
         fitted_signal[2*i] = envelope * cos(angle);
-        fitted_signal[2*i + 1] = envelope * sin(angle);
-    }
-    
-    // use fitted signal to calculate snr
-    int32_t samplebase = threadIdx.x * nlags * 2; 
-    for(i = 0; i < nlags; i++) {
+        fitted_signal[2*i+1] = envelope * sin(angle);
+        
         samples[samplebase + 2*i] -= fitted_signal[2*i];
         samples[samplebase + 2*i+1] -= fitted_signal[2*i+1];
-
-        rempwr += sqrt(pow(samples[samplebase + 2*i],2) + pow(samples[samplebase + 2*i+1],2)) * lagmask[i >> 1];
-        fitpwr += sqrt(pow(fitted_signal[2*i],2) + pow(fitted_signal[2*i+1],2)) * lagmask[i >> 1];
+        
+        rempwr += sqrt(pow(samples[samplebase + 2*i],2) + pow(samples[samplebase + 2*i+1],2)) * lagmask[i];
+        fitpwr += sqrt(pow(fitted_signal[2*i],2) + pow(fitted_signal[2*i+1],2)) * lagmask[i];
     }
-
+    
     snr[threadIdx.x] = fitpwr / rempwr;
 }
 """)
-
-def calculate_bayes(s, t, f, alfs, env_model, ce_matrix, se_matrix, CS_f):
-    N = len(t) * 2.# see equation (10) in [4]
-    m = 2
-
-    dbar2 = (sum(np.real(s) ** 2) + sum(np.imag(s) ** 2)) / (N) # (11) in [4] 
-    R_f = (np.dot(np.real(s), ce_matrix) + np.dot(np.imag(s), se_matrix)).T
-    I_f = (np.dot(np.real(s), se_matrix) - np.dot(np.imag(s), ce_matrix)).T
-    
-    hbar2 = ne.evaluate('((R_f ** 2) / CS_f + (I_f ** 2) / CS_f) / 2.')# (19) in [4] 
-    
-    P_f = np.log10(N * dbar2 - hbar2)  * ((2 - N) / 2.) - np.log10(CS_f)
-    return R_f, I_f, hbar2, P_f
 
 class BayesGPU:
     def __init__(self, lags, freqs, alfs, npulses, env_model):
@@ -334,7 +323,8 @@ class BayesGPU:
         lagmask = np.int32(lagmask)
         cuda.memcpy_htod(self.samples_gpu, samples)
         cuda.memcpy_htod(self.lagmask_gpu, lagmask)
-
+    
+        # about 90% of the time is spent on calc_bayes
         self.calc_bayes(self.samples_gpu, self.lagmask_gpu, self.ce_gpu, self.se_gpu, self.CS_f_gpu, self.R_f_gpu, self.I_f_gpu, self.hbar2_gpu, self.P_f_gpu, self.env_model, self.nlags, self.nalfs, self.n_good_lags_gpu, block = (int(self.nfreqs),1,1), grid = (int(self.npulses),1,1))
         self.find_peaks(self.P_f_gpu, self.peaks_gpu, self.nalfs, block = (int(self.nfreqs),1,1), grid = (int(self.npulses),1))
         self.process_peaks(self.samples_gpu, self.lag_times_gpu, self.freqs_gpu, self.alfs_gpu, self.P_f_gpu, self.R_f_gpu, self.I_f_gpu, self.CS_f_gpu, self.snr_gpu, self.lagmask_gpu, self.n_good_lags_gpu, self.peaks_gpu, self.nfreqs, self.nalfs, self.nlags, self.alf_fwhm_gpu, self.freq_fwhm_gpu, self.amplitudes_gpu, block = (int(self.npulses),1,1))
@@ -350,7 +340,6 @@ class BayesGPU:
         dalpha = self.alfs[1] - self.alfs[0]
         dfreqs = self.freqs[1] - self.freqs[0]
         
-        # TODO: calculate SNR
         N = 2 * self.n_good_lags
         
         w_l_idx = ((self.peaks - (self.peaks % self.nfreqs)) % (self.nfreqs * self.nalfs)) / self.nfreqs
@@ -367,16 +356,15 @@ class BayesGPU:
         self.p_l = self.amplitudes / noise
         self.p_l[self.p_l <= 0] = np.nan
         self.p_l = 10 * np.log10(self.p_l)
-    
+         
         # raw freq/decay for debugging
         self.vfreq = (self.freqs[v_l_idx])
         self.walf = (self.alfs[w_l_idx])
 
-
-        
-#@profile
-# kernprof -l cuda_bayes.py
-#python -m line_profiler script_to_profile.py.lprof
+# example function to run cuda_bayes against some generated data
+# to profile, add @profile atop interesting functions       
+# run kernprof -l cuda_bayes.py
+# then python -m line_profiler cuda_bayes.py.lprof to view results
 def main():
     fs = 100.
     ts = 1./fs
