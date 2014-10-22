@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as dates
 import numpy as np
 import glob
-from pytz import timezone
 
 BEAMS = 16
 MAX_LOMBDEPTH = 1
@@ -104,7 +103,6 @@ def createMergefile(radar, starttime, endtime, datadir):
     
     # for each day between starttime and endtime
     # loop, adding 1 day to starttime until delta between starttime and endtime is <= 1 day
-    day = starttime.day
 
     filename = radar + starttime.strftime('%Y%m%d') + 'to' + endtime.strftime('%Y%m%d') + '.hdf5'
     mergefile = h5py.File(datadir + filename, 'w')

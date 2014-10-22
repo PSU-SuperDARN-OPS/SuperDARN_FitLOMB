@@ -8,19 +8,18 @@
 # TODO: fix nlag, qflg, and snr
 import argparse
 import pydarn.sdio as sdio
-import datetime, calendar
+import datetime, calendar, time
 import numpy as np
 import h5py
 import lagstate
 import pdb
 import os
-from itertools import chain, izip
 from cuda_bayes import BayesGPU
 
 FITLOMB_REVISION_MAJOR = 2
 FITLOMB_REVISION_MINOR = 1
 ORIGIN_CODE = 'pydarncuda_fitlomb.py'
-DATA_DIR = '/raid0/tmp/fitlomb/'
+DATA_DIR = '/tmp/fitlomb/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
 
 I_OFFSET = 0
@@ -233,12 +232,10 @@ class CULombFit:
 
 #    @profile 
     def CudaProcessPulse(self, gpu):
-        # TODO: create samples and lagmask 
-        # TODO: check time resolution and frequency band, see if we need to regenerate ce/se matricies
         lagsmask = []
         isamples = np.zeros([len(self.ranges), 2 * gpu.nlags])
 
-        # TODO: about 15% of execution time spent here
+        # about 15% of execution time spent here
         for r in self.ranges:
             times, samples = self._CalcSamples(r)
             lmask = [l in times for l in gpu.lags]
@@ -261,8 +258,6 @@ class CULombFit:
 
     # get time and good complex samples for a range gate
     def _CalcSamples(self, rgate):
-        offset = self.mplgs * rgate
-
         # see http://davit.ece.vt.edu/davitpy/_modules/pydarn/sdio/radDataTypes.html
         i_lags = self.acfi[rgate]
         q_lags = self.acfq[rgate]
@@ -282,15 +277,12 @@ class CULombFit:
 
     def CudaCopyPeaks(self, gpu):
         # compute velocity, width, and power for each peak with "sigma" and "lambda" fits
-        # TODO: calculate t array with number of good lags..
-        N = 2 * 25#len(fit['t'])  
-
         self.w_l = gpu.w_l 
         self.w_l_std = gpu.w_l_std
         self.w_l_e = gpu.w_l_e
         
         # record ratio of power in signal versus power in fitted signal
-        #self.fit_snr_l[rgate,i] = fit['fit_snr']
+        self.fit_snr_l = gpu.snr
 
         # amplitude estimation, see bayesian analysis v: amplitude estimation, multiple well separated sinusoids
         # bretthorst, equation 78, I'm probably doing this wrong...
@@ -304,8 +296,8 @@ class CULombFit:
         self.v_l_std = gpu.v_l_std
         self.v_l_e = gpu.v_l_e
         
+        '''
         for rgate in self.ranges:
-            '''
             #self.iflg = (abs(self.v_l) - (self.v_thresh - (self.v_thresh / self.w_thresh) * abs(self.w_l[rgate, i])) > 0) 
             i = 0
             # set qflg if .. signal to noise ratios are high enough, not stuck 
@@ -318,31 +310,30 @@ class CULombFit:
                     self.fit_snr_l[rgate, i] <= self.snr_thresh and \
                     self.v_l[rgate, i] > -self.vimax_thresh:
                 self.qflg[rgate,i] = 1
-           ''' 
-    if CALC_SIGMA:
-        for (i, fit) in enumerate(self.sfits[rgate]):
-            # calculate "sigma" parameters
-            np.append(self.sd_s[rgate],0) # TODO: what is a reasonable value for this? 
-             
-            self.w_s[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.tfreq * 1e3)) 
+        if CALC_SIGMA:
+            for (i, fit) in enumerate(self.sfits[rgate]):
+                # calculate "sigma" parameters
+                np.append(self.sd_s[rgate],0) # TODO: what is a reasonable value for this? 
+                 
+                self.w_s[rgate,i] = (C * fit['alpha']) / (2. * np.pi * (self.tfreq * 1e3)) 
 
-            self.w_s_std[rgate,i] = (((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA)
-            self.w_s_e[rgate,i] = self.w_s_std[rgate,i] / np.sqrt(N)
-            
-            self.p_s[rgate,i] = fit['amplitude'] / self.noise
-            self.p_s_e[rgate,i] = np.sqrt((self.noise ** 2)/fit['amplitude_error_unscaled'])/self.noise # this may be scaled wrong..
+                self.w_s_std[rgate,i] = (((C * fit['alpha_fwhm']) / (2. * np.pi * (self.tfreq * 1e3))) / FWHM_TO_SIGMA)
+                self.w_s_e[rgate,i] = self.w_s_std[rgate,i] / np.sqrt(N)
+                
+                self.p_s[rgate,i] = fit['amplitude'] / self.noise
+                self.p_s_e[rgate,i] = np.sqrt((self.noise ** 2)/fit['amplitude_error_unscaled'])/self.noise # this may be scaled wrong..
 
-            v_s = (fit['frequency'] * C) / (2 * self.tfreq * 1e3)
-            self.v_s[rgate,i] = v_s
+                v_s = (fit['frequency'] * C) / (2 * self.tfreq * 1e3)
+                self.v_s[rgate,i] = v_s
 
-            self.r2_phase_s[rgate, i] = fit['r2_phase']
-            self.fit_snr_s[rgate,i] = fit['fit_snr']
-            self.v_s_std[rgate,i] = ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA)
-            self.v_s_e[rgate,i] = self.v_s_std[rgate,i] / np.sqrt(N)
+                self.r2_phase_s[rgate, i] = fit['r2_phase']
+                self.fit_snr_s[rgate,i] = fit['fit_snr']
+                self.v_s_std[rgate,i] = ((((fit['frequency_fwhm']) * C) / (2 * self.tfreq * 1e3)) / FWHM_TO_SIGMA)
+                self.v_s_e[rgate,i] = self.v_s_std[rgate,i] / np.sqrt(N)
 
-        self.p_s[self.p_s <= 0] = np.nan 
-        self.p_s = 10 * np.log10(self.p_s)
-
+            self.p_s[self.p_s <= 0] = np.nan 
+            self.p_s = 10 * np.log10(self.p_s)
+        '''
 
     def CalcNoise(self):
         # take average of smallest ten powers at range gate 0 for lower bound on noise
@@ -378,7 +369,6 @@ class CULombFit:
                 # .. this will only work if we have a good lag zero sample
                 # TODO: work on fall back
                 if not bad_lags[rgate][0]: 
-                    offset = self.mplgs * rgate
                     i_lags = self.acfi[rgate]
                     q_lags = self.acfq[rgate]
                     samples = i_lags + 1j * q_lags 
@@ -390,7 +380,7 @@ class CULombFit:
                     # if lag zero is bad, we can't filter out lags greater than lag zero because we don't know what it is..
                     pass 
 
-        self.nlag[rgate] = len(bad_lags[rgate]) - sum(bad_lags[rgate])
+                self.nlag[rgate] = len(bad_lags[rgate]) - sum(bad_lags[rgate])
         self.bad_lags = bad_lags 
 
 # create a COMPACT type h5py dataset using low level API...
@@ -413,78 +403,97 @@ def add_compact_dset(hdf5file, group, dsetname, data, dtype, mask = []):
 def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
-    parser.add_argument("--infile", help="input RawACF file to convert")
-    parser.add_argument("--outfile", help="output FitLSS file")
-    parser.add_argument("--starttime", help="input RawACF file to convert")
-    parser.add_argument("--endtime", help="input RawACF file to convert")
-    parser.add_argument("--pulses", help="calculate lomb over multiple pulses", default=1) 
+    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.03.01.00")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.03.01.02")
+
+    parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=.1) 
     parser.add_argument("--radar", help="radar to create data from", default='ksr.a') 
 
+    # TODO: add channel/beam?
+
     args = parser.parse_args() 
-    args.pulses = int(args.pulses)
-
-    # ksr, kod, pgr, ade, cvw 
-    recordlen = 2 
-    #days = [datetime.datetime(2014,3,1), datetime.datetime(2014,3,2), datetime.datetime(2014,3,4), datetime.datetime(2014,3,6)]
-    days = [datetime.datetime(2014,3,1)]
-    hours = range(20, 22, recordlen) 
-    #hours = [0]
-    #
     
-    # boilerplate..
-    fileType='rawacf'
-    filtered=False
-    src='local'
-    channel=None
+    # parse date string and convert to datetime object
+    starttime = datetime.datetime(*time.strptime(args.starttime, "%Y.%m.%d.%H")[:6])
+    endtime = datetime.datetime(*time.strptime(args.endtime, "%Y.%m.%d.%H")[:6])
+
+    # sanity check arguements
+    if args.recordlen > 24 or args.recordlen <= 0:
+        print 'recordlen arguement must be greater than 0 hours and less than or equal to 24 hours'
+        return
+
+    if not args.radar in ['ksr.a', 'kod.c', 'kod.d', 'sps.a', 'mcm.a', 'mcm.b', 'ade.a', 'adw.a']:
+        print 'sorry, only UAF radars with data on chiniak are currently supported'
+        return
     
-    lags = [.0015 * i for i in range(NLAGS)]
+    if starttime > endtime:
+        print 'start time is after end time..'
+        return
 
-    # create velocity and spectral width space based on maximum transmit frequency
-    amax = np.ceil((np.pi * 2 * MAX_TFREQ * MAX_W) / C)
-    fmax = np.ceil(MAX_V * 2 * MAX_TFREQ / C)
+    while starttime < endtime:
+        pdb.set_trace()
+        stime = starttime
+        etime = stime + datetime.timedelta(hours = args.recordlen)
 
-    freqs = np.linspace(-fmax,fmax, NFREQS)
-    alfs = np.linspace(0, amax, NALFS)
-    
-    gpu_lambda = BayesGPU(lags, freqs, alfs, MAXPULSES, LAMBDA_FIT)
-    #gpu_sigma = BayesGPU(lags, freqs, alfs, MAXPULSES, SIGMA_FIT)
+        print 'computing from ' + str(stime) + ' to ' + str(etime)
+        starttime = etime
+        pdb.set_trace()
+        myPtr = sdio.radDataOpen(stime,args.radar,eTime=etime,channel=None,bmnum=None,cp=None,fileType='rawacf',filtered=False, src='local')
+        outfilename = stime.strftime('%Y%m%d.%H%M.' + args.radar + '.fitlomb.hdf5') 
+        outfilepath = DATA_DIR + stime.strftime('%Y/%m.%d/') 
 
-    for radar_code in [args.radar]:
-        #try:
-		for sday in days:
-		    for hoffset in hours:
-			#try:
-				stime = sday + datetime.timedelta(hours = hoffset)
-				etime = sday + datetime.timedelta(hours = (hoffset + recordlen))
-				myPtr = sdio.radDataOpen(stime,radar_code,eTime=etime,channel=None,bmnum=None,cp=None,fileType=fileType,filtered=filtered, src=src)
-				outfilename = stime.strftime('%Y%m%d.%H%M.' + radar_code + '.fitlomb.hdf5') 
-				outfilepath = DATA_DIR + stime.strftime('%Y/%m.%d/') 
-				if not os.path.exists(outfilepath):
-				    os.makedirs(outfilepath)
-				
-				hdf5file = h5py.File(outfilepath + outfilename, 'w')
+        if not os.path.exists(outfilepath):
+            os.makedirs(outfilepath)
+        
+        hdf5file = h5py.File(outfilepath + outfilename, 'w')
 
-				lombfits = []
-				 
-				drec = sdio.radDataReadRec(myPtr)
+        # set up frequency/alpha vectors 
+        amax = np.ceil((np.pi * 2 * MAX_TFREQ * MAX_W) / C)
+        fmax = np.ceil(MAX_V * 2 * MAX_TFREQ / C)
+        freqs = np.linspace(-fmax,fmax, NFREQS)
+        alfs = np.linspace(0, amax, NALFS)
 
-				while drec != None:
-			#	    try:
-					fit = CULombFit(drec) # 30 %
-					fit.CudaProcessPulse(gpu_lambda) # 50 %
-                                        fit.CudaCopyPeaks(gpu_lambda) 
-					fit.WriteLSSFit(hdf5file) # 4 %
-			#	    except:
-			#		print 'error fitting file, skipping record..'
-                                        print fit.recordtime
-				        drec = sdio.radDataReadRec(myPtr) # 16 %
+        try: 
+            drec = sdio.radDataReadRec(myPtr)
 
-				hdf5file.close() 
+        except:
+            print 'error reading first rawacf record for ' + str(stime) + '... skipping to next record block'
+            hdf5file.close() 
+            continue
 
-			#except:
-			#	print 'error ofitting block'
-        #except:
-         #   print 'day failed..'
+        gpu_lambda = None
+        
+
+        
+        while drec != None:
+            try:
+                fit = CULombFit(drec) # ~ 30% of the time is spent here
+            except:
+                print 'error reading rawacf record, skipping'
+                continue
+            
+            lags = np.float32(np.array([i * fit.mpinc / 1e6 for i in xrange(fit.mplgs)]))
+
+            # create velocity and spectral width space based on maximum transmit frequency
+            if gpu_lambda == None:
+                gpu_lambda = BayesGPU(lags, freqs, alfs, fit.nrang, LAMBDA_FIT)
+            # generate new caches on the GPU for the fit if the pulse sequence has changed 
+            elif gpu_lambda.npulses != fit.nrang or (not np.array_equal(lags, gpu_lambda.lags)):
+                gpu_lambda = BayesGPU(lags, freqs, alfs, fit.nrang, LAMBDA_FIT)
+                print 'the pulse sequence has changed'
+           
+            try:
+                fit.CudaProcessPulse(gpu_lambda) # ~ 50%
+                fit.CudaCopyPeaks(gpu_lambda) 
+                fit.WriteLSSFit(hdf5file) # 4 %
+	    except:
+		print 'error fitting file, skipping record at ' + str(fit.recordtime) 
+
+            #print 'computed ' + str(fit.recordtime)
+
+            drec = sdio.radDataReadRec(myPtr) # ~ 15% of the time is spent here
+
+        hdf5file.close() 
 
 if __name__ == '__main__':
     main()

@@ -7,7 +7,6 @@
 
 import numpy as np
 import datetime
-import pdb
 
 # TimeCube is a class of cached cubes of amplitude(time, frequency, decay)
 # creating these is expensive and RAM is cheap, so...

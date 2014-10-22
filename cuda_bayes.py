@@ -1,11 +1,9 @@
 #!/usr/bin/python2
 import pycuda.driver as cuda
-import pycuda.gpuarray as gpuarray 
 import pycuda.compiler
 import pycuda.autoinit
 import numpy as np
 from itertools import chain, izip
-import time
 from timecube import make_spacecube
 
 # debugging imports
@@ -372,9 +370,7 @@ def main():
     f = [30.]
     amp = [10.]
     alf = [10.]
-    env_model = 1
     lags = np.arange(0, 25) * ts
-    times=[]
     signal=[]
 
     MAXPULSES = 100
@@ -418,7 +414,6 @@ def main():
     
     print 'snr: ' + str(gpu.snr[0])
 
-    import matplotlib.pyplot as plt
     plt.plot(np.real(signal))
     plt.plot(np.imag(signal))
     fit=gpu.amplitudes[0] * np.exp(1j * 2 * np.pi * gpu.vfreq[0] * lags) * np.exp(-gpu.walf[0] * lags)
