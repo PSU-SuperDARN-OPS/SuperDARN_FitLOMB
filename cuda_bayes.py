@@ -24,7 +24,7 @@ mod = pycuda.compiler.SourceModule("""
 #define IMAG 1
 #define MAX_SAMPLES 25
 #define MAX_ALPHAS 128 // MUST BE A POWER OF 2
-#define MAX_FREQS 256 // MUST BE A POWER OF 2
+#define MAX_FREQS 512 // MUST BE A POWER OF 2
 #define PI (3.141592)
 
 // lags is mask of good lags 
@@ -179,7 +179,7 @@ __global__ void process_peaks(float *samples, float *lag_times, float *freqs, fl
     }
     __syncthreads();  
 
-    // find alpha fwhm, change formatting to more direct..
+    // find alpha fwhm 
     for(i = peakidx; i < pulse_upperbound && P_f[i] > factor; i+=nfreqs) {
         afwhm++; 
     } 
@@ -327,6 +327,8 @@ class BayesGPU:
         self.find_peaks(self.P_f_gpu, self.peaks_gpu, self.nalfs, block = (int(self.nfreqs),1,1), grid = (int(self.npulses),1))
         self.process_peaks(self.samples_gpu, self.lag_times_gpu, self.freqs_gpu, self.alfs_gpu, self.P_f_gpu, self.R_f_gpu, self.I_f_gpu, self.CS_f_gpu, self.snr_gpu, self.lagmask_gpu, self.n_good_lags_gpu, self.peaks_gpu, self.nfreqs, self.nalfs, self.nlags, self.alf_fwhm_gpu, self.freq_fwhm_gpu, self.amplitudes_gpu, block = (int(self.npulses),1,1))
 
+    
+    def process_bayesfit(self, tfreq, noise):
         cuda.memcpy_dtoh(self.amplitudes, self.amplitudes_gpu)
         cuda.memcpy_dtoh(self.alf_fwhm, self.alf_fwhm_gpu)
         cuda.memcpy_dtoh(self.freq_fwhm, self.freq_fwhm_gpu)
@@ -334,30 +336,29 @@ class BayesGPU:
         cuda.memcpy_dtoh(self.n_good_lags, self.n_good_lags_gpu)
         cuda.memcpy_dtoh(self.snr, self.snr_gpu)
 
-    def process_bayesfit(self, tfreq, noise):
         dalpha = self.alfs[1] - self.alfs[0]
         dfreqs = self.freqs[1] - self.freqs[0]
         
         N = 2 * self.n_good_lags
         
-        w_l_idx = ((self.peaks - (self.peaks % self.nfreqs)) % (self.nfreqs * self.nalfs)) / self.nfreqs
-        v_l_idx = self.peaks % self.nfreqs
+        w_idx = ((self.peaks - (self.peaks % self.nfreqs)) % (self.nfreqs * self.nalfs)) / self.nfreqs
+        v_idx = self.peaks % self.nfreqs
 
-        self.w_l = (self.alfs[w_l_idx] * C) / (2. * np.pi * (tfreq * 1e3))
-        self.w_l_std = dalpha * (((C * self.alf_fwhm) / (2. * np.pi * (tfreq * 1e3))) / FWHM_TO_SIGMA)
-        self.w_l_e = self.w_l_std / np.sqrt(N)
+        self.w = (self.alfs[w_idx] * C) / (2. * np.pi * (tfreq * 1e3))
+        self.w_std = dalpha * (((C * self.alf_fwhm) / (2. * np.pi * (tfreq * 1e3))) / FWHM_TO_SIGMA)
+        self.w_e = self.w_std / np.sqrt(N)
         
-        self.v_l = (self.freqs[v_l_idx] * C) / (2 * tfreq * 1e3)
-        self.v_l_std = dfreqs * ((((self.freq_fwhm) * C) / (2 * tfreq * 1e3)) / FWHM_TO_SIGMA)
-        self.v_l_e = self.v_l_std / np.sqrt(N)
+        self.v = (self.freqs[v_idx] * C) / (2 * tfreq * 1e3)
+        self.v_std = dfreqs * ((((self.freq_fwhm) * C) / (2 * tfreq * 1e3)) / FWHM_TO_SIGMA)
+        self.v_e = self.v_std / np.sqrt(N)
 
-        self.p_l = self.amplitudes / noise
-        self.p_l[self.p_l <= 0] = np.nan
-        self.p_l = 10 * np.log10(self.p_l)
+        self.p = self.amplitudes / noise
+        self.p[self.p <= 0] = np.nan
+        self.p = 10 * np.log10(self.p)
          
         # raw freq/decay for debugging
-        self.vfreq = (self.freqs[v_l_idx])
-        self.walf = (self.alfs[w_l_idx])
+        self.vfreq = (self.freqs[v_idx])
+        self.walf = (self.alfs[w_idx])
 
 # example function to run cuda_bayes against some generated data
 # to profile, add @profile atop interesting functions       
