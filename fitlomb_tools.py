@@ -5,12 +5,12 @@
 
 import argparse
 import h5py
-import pdb
 import datetime
 import matplotlib.pyplot as plt
 import matplotlib.dates as dates
 import numpy as np
 import glob
+import time 
 
 BEAMS = 16
 MAX_LOMBDEPTH = 1
@@ -328,26 +328,26 @@ def PlotTime(radar, starttime, endtime, directory, beams):
 if __name__ == '__main__':
     prettyify() # set matplotlib parameters for larger text
 
-    plot_times = {datetime.datetime(2014,3,01,0,00) : datetime.datetime(2014,3,01,1)}
-    
-    TIMEINT = 10 #
+    parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
 
-    RADARS = ['ksr.a']
+    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.03.01.00")
+    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.03.02.00")
+    parser.add_argument("--radar", help="radar to create data from", default='mcm.a')
+    parser.add_argument("--beam", help="beam to plot", default=3)
 
-    for radar in RADARS:
+    args = parser.parse_args()
+
+    # parse date string and convert to datetime object
+    starttime = datetime.datetime(*time.strptime(args.starttime, "%Y.%m.%d.%H")[:6])
+    endtime = datetime.datetime(*time.strptime(args.endtime, "%Y.%m.%d.%H")[:6])
+
+    plot_times = {starttime : endtime}
+
+    for radar in [args.radar]:
         for stime in plot_times.keys():
-            for beam in BEAMS:
+            timespan = (stime - plot_times[stime])
+            TIMEINT = -min(int((timespan.days * 24 * 60 + timespan.seconds / 60.) / 12.),-1)
+            for beam in [args.beam]:
                 print 'plotting '  + str(stime)
-                #try:
-                    #RADAR = 'kod.c'
-                    #PlotTime(RADAR, stime, plot_times[stime], DATADIR, ['9'])
                 RADAR = radar
                 PlotTime(RADAR, stime, plot_times[stime], DATADIR, [beam]) 
-
-                #except:
-                #    plt.clf()
-                #    pass
-                #RADAR = 'kod.d'
-                #PlotTime(RADAR, stime, plot_times[stime], DATADIR, ALLBEAMS)
-   
-

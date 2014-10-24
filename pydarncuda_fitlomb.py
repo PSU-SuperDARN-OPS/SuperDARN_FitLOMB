@@ -420,10 +420,10 @@ def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
     parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.03.01.00")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.03.01.01")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.04.01.00")
 
-    parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=.1) 
-    parser.add_argument("--radar", help="radar to create data from", default='ksr.a') 
+    parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
+    parser.add_argument("--radar", help="radar to create data from", default='mcm.a') 
 
     # TODO: add channel/beam?
 

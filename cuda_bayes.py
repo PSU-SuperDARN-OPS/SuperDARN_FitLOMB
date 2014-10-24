@@ -208,11 +208,11 @@ __global__ void process_peaks(float *samples, float *lag_times, float *freqs, fl
         ffwhm++; 
     }
     __syncthreads();  // sync threads, they probably diverged during fwhm calculations
-
-    // TODO: why do I need a factor of 2 to scale amplitude to match synthetic data..?
-    peakamp = (R_f[peakidx] + I_f[peakidx]) / (CS_f[peakidx % nalphas]); 
+    
+    uint32_t alfidx = ((peakidx - (peakidx % nfreqs)) % (nfreqs * nalphas)) / nfreqs;
+    peakamp = (R_f[peakidx] + I_f[peakidx]) / (CS_f[alfidx]); 
     peakfreq = freqs[peakidx % nfreqs];
-    peakalf = alfs[((peakidx - (peakidx % nfreqs)) % (nfreqs * nalphas)) / nfreqs];
+    peakalf = alfs[alfidx];
 
     alphafwhm[threadIdx.x] = afwhm;
     freqfwhm[threadIdx.x] = ffwhm;
@@ -418,7 +418,7 @@ def main():
         f = [0]
         amp = [10.]
         alf = [5]
-        lags = np.arange(0, 8) * ts
+        lags = np.arange(0, 16) * ts
         signal=[]
 
         maxpulses = 2
@@ -446,7 +446,7 @@ def main():
         freqs = np.linspace(-fs/20, fs/20, 512)
         freqs = np.linspace(0, 0, 16)
         alfs = np.linspace(0,fs/2, 256)
-        alfs = np.linspace(0,2, 16)
+        alfs = np.linspace(0,15, 16)
 
     else: 
         import pickle
@@ -501,13 +501,13 @@ def main():
     
 
     cuda.memcpy_dtoh(gpu.P_f, gpu.P_f_gpu)
-    if max(P_f_cpu.flatten() - gpu.P_f.flatten()[0:(len(freqs) * len(alfs))]) < 1e-6:
+    
+    if max(P_f_cpu.flatten() - gpu.P_f.flatten()[0:(len(freqs) * len(alfs))]) < 3e-6:
         print 'P_f on GPU and CPU match'
     else:
         print 'P_f calculation error! GPU and CPU matricies do not match'
 
 
-    pdb.set_trace()
     plt.imshow(gpu.P_f[rgate])
     plt.show()
 
