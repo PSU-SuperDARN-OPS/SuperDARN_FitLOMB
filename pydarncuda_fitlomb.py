@@ -29,8 +29,7 @@ FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 2000 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 1500 # m/s, max spectral width to include in lomb 
 NFREQS = 512
-NALFS = 128
-NLAGS = 25
+NALFS = 256
 MAXPULSES = 300
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
@@ -322,6 +321,8 @@ class CULombFit:
         import matplotlib.pyplot as plt
 
         for gate in self.ranges:
+            print self.recordtime
+            print 'range gate: ' + str(gate)
             print 'calculated amplitude: ' + str(gpu.amplitudes[gate])
             print 'calculated freq: ' + str(gpu.vfreq[gate])
             print 'calculated decay: ' + str(gpu.walf[gate])
@@ -332,11 +333,13 @@ class CULombFit:
             plt.plot(np.imag(fit), '-')
             
             signal = self.isamples[gate][I_OFFSET::2] + 1j*self.isamples[gate][Q_OFFSET::2]
+
+            signal[self.bad_lags[gate] != 0] = 0
+
             plt.plot(np.real(signal))
             plt.plot(np.imag(signal))
-
             plt.show()
-
+            pdb.set_trace()
 
 
     def CalcNoise(self):
@@ -363,7 +366,7 @@ class CULombFit:
             self.noise = np.mean(noise_samples)
     
     # calculate and store bad lags
-    def CalcBadlags(self, pwrthresh = True):
+    def CalcBadlags(self, pwrthresh = True, uselagzero = False):
         bad_lags = lagstate.bad_lags(self, self.pwr0)
       
         if pwrthresh:
@@ -385,6 +388,10 @@ class CULombFit:
                     pass 
 
                 self.nlag[rgate] = len(bad_lags[rgate]) - sum(bad_lags[rgate])
+
+                if not uselagzero:
+                    bad_lags[rgate][0] = True
+
         self.bad_lags = bad_lags 
 
 # create a COMPACT type h5py dataset using low level API...
@@ -490,8 +497,8 @@ def main():
                 fit.CudaCopyPeaks(gpu_lambda)
                 fit.CudaCopyPeaks(gpu_sigma)
                 fit.WriteLSSFit(hdf5file) # 4 %
-                #fit.CudaPlotFit(gpu_lambda)
-	    except None:
+                fit.CudaPlotFit(gpu_lambda)
+	    except:
 		print 'error fitting file, skipping record at ' + str(fit.recordtime) 
 
             #print 'computed ' + str(fit.recordtime)

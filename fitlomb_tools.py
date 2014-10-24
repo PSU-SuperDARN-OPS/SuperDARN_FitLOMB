@@ -14,7 +14,7 @@ import glob
 
 BEAMS = 16
 MAX_LOMBDEPTH = 1
-DATADIR = '/home/radar/repos/SuperDARN_FitLOMB/cudatmpdata/'
+DATADIR = '/home/radar/fitlomb/'
 PLOTDIR = './plots/'
 VEL_CMAP = plt.cm.RdBu
 FREQ_CMAP = plt.cm.spectral
@@ -56,6 +56,7 @@ VMIN = -VMAX
 
 def dbscale(vec):
     return 50 * np.log10(vec)
+
 def prettyify():
     plt.rcParams.update({'font.size': 16})
     #plt.rcParams.update({'font.weight': 'bold'})

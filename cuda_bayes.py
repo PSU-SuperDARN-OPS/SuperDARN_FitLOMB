@@ -23,7 +23,7 @@ mod = pycuda.compiler.SourceModule("""
 #define REAL 0
 #define IMAG 1
 #define MAX_SAMPLES 25
-#define MAX_ALPHAS 128 // MUST BE A POWER OF 2
+#define MAX_ALPHAS 256 // MUST BE A POWER OF 2
 #define MAX_FREQS 512 // MUST BE A POWER OF 2
 #define PI (3.141592)
 
@@ -86,6 +86,8 @@ __global__ void calc_bayes(float *samples, int32_t *lags, float *ce_matrix, floa
         int32_t RI_offset = (blockIdx.x * blockDim.x * nalphas) + (i * blockDim.x) + threadIdx.x;
         R_f[RI_offset] = 0;
         I_f[RI_offset] = 0;
+
+        
         for(t = 0; t < nsamples; t++) {
             int32_t CS_offset = (i * blockDim.x * nsamples) + (t * blockDim.x) + threadIdx.x;
             sample_offset = 2*t;
@@ -94,17 +96,29 @@ __global__ void calc_bayes(float *samples, int32_t *lags, float *ce_matrix, floa
                                 s_samples[sample_offset + IMAG] * se_matrix[CS_offset];
             I_f[RI_offset] +=   s_samples[sample_offset + REAL] * se_matrix[CS_offset] - \
                                 s_samples[sample_offset + IMAG] * ce_matrix[CS_offset];
+            if(threadIdx.x == 0) {
+                printf("ce_matrix[%d] = %.3f\\n", CS_offset, ce_matrix[CS_offset]);
+            }
+
         }
 
-        hbar2[RI_offset] = (pow(R_f[RI_offset],2) / s_cs_f[i] + \
-                            pow(I_f[RI_offset],2) / s_cs_f[i]) / 2;
+        hbar2[RI_offset] = ((pow(R_f[RI_offset],2) / s_cs_f[i]) + \
+                            (pow(I_f[RI_offset],2) / s_cs_f[i])) / 2;
         
-        P_f[RI_offset] = log10(nsamples * 2 * dbar2 - hbar2[RI_offset]) * (1 - ((int32_t) nsamples)) - log10(s_cs_f[i]);
+        P_f[RI_offset] = log10(n_good_samples * 2 * dbar2 - hbar2[RI_offset]) * (1 - ((double) n_good_samples)) - log10(s_cs_f[i]);
     }
 
     if(threadIdx.x == 0) {
         n_good_lags_v[blockIdx.x] = n_good_samples;
     }
+
+    if(threadIdx.x == 0) {
+        samplebase = blockIdx.x * nsamples * 2; 
+        for(i = 0; i < nsamples; i++) {
+           printf("sample[%d] = %.3f, %.2f\\n", i, s_samples[2*i], s_samples[2*i+1]);
+        }
+    }
+
 }
 
 // P_f is [pulse][alpha][freq]
@@ -203,7 +217,7 @@ __global__ void process_peaks(float *samples, float *lag_times, float *freqs, fl
     __syncthreads();  // sync threads, they probably diverged during fwhm calculations
 
     // TODO: why do I need a factor of 2 to scale amplitude to match synthetic data..?
-    peakamp = (R_f[peakidx] + I_f[peakidx]) / (2 * CS_f[peakidx % nalphas]); 
+    peakamp = (R_f[peakidx] + I_f[peakidx]) / (CS_f[peakidx % nalphas]); 
     peakfreq = freqs[peakidx % nfreqs];
     peakalf = alfs[((peakidx - (peakidx % nfreqs)) % (nfreqs * nalphas)) / nfreqs];
 
@@ -216,6 +230,7 @@ __global__ void process_peaks(float *samples, float *lag_times, float *freqs, fl
         int32_t samplebase = threadIdx.x * nlags * 2; 
 
         float envelope = peakamp * exp(-peakalf * s_times[i]); 
+        // TODO: add in environment model... exp(-peakalf ** 2?)
         float angle = 2 * PI * peakfreq * s_times[i];
         fitted_signal[2*i] = envelope * cos(angle);
         fitted_signal[2*i+1] = envelope * sin(angle);
@@ -230,6 +245,22 @@ __global__ void process_peaks(float *samples, float *lag_times, float *freqs, fl
     snr[threadIdx.x] = fitpwr / rempwr;
 }
 """)
+
+# function to calculate P_f on CPU to check GPU calculations
+def calculate_bayes(s, t, f, alfs, env_model):
+    import numexpr as ne
+    ce_matrix, se_matrix, CS_f = make_spacecube(t, f, alfs, env_model)
+
+    N = len(t) * 2.# see equation (10) in [4]
+    m = 2
+    dbar2 = (sum(np.real(s) ** 2) + sum(np.imag(s) ** 2)) / (N) # (11) in [4] 
+    R_f = (np.dot(np.real(s), ce_matrix) + np.dot(np.imag(s), se_matrix)).T
+    I_f = (np.dot(np.real(s), se_matrix) - np.dot(np.imag(s), ce_matrix)).T
+    
+    hbar2 = ne.evaluate('((R_f ** 2) / CS_f + (I_f ** 2) / CS_f) / 2.')# (19) in [4] 
+    
+    P_f = np.log10(N * dbar2 - hbar2)  * ((2 - N) / 2.) - np.log10(CS_f)
+    return R_f, I_f, hbar2, P_f
 
 class BayesGPU:
     def __init__(self, lags, freqs, alfs, npulses, env_model):
@@ -271,8 +302,8 @@ class BayesGPU:
         R_f = np.float32(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
         I_f = np.float32(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
         hbar2 = np.float64(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
-        P_f = np.float64(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
         samples = np.float32(np.zeros([self.npulses, 2 * self.nlags]))
+        self.P_f = np.float64(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
 
         self.peaks = np.int32(np.zeros(self.npulses))
         self.alf_fwhm = np.int32(np.zeros(self.npulses))
@@ -291,7 +322,7 @@ class BayesGPU:
         self.R_f_gpu = cuda.mem_alloc(R_f.nbytes)
         self.I_f_gpu = cuda.mem_alloc(I_f.nbytes)
         self.hbar2_gpu  = cuda.mem_alloc(hbar2.nbytes)
-        self.P_f_gpu = cuda.mem_alloc(P_f.nbytes)
+        self.P_f_gpu = cuda.mem_alloc(self.P_f.nbytes)
         self.peaks_gpu = cuda.mem_alloc(self.peaks.nbytes)
         self.alf_fwhm_gpu = cuda.mem_alloc(self.alf_fwhm.nbytes)
         self.freq_fwhm_gpu = cuda.mem_alloc(self.freq_fwhm.nbytes)
@@ -318,9 +349,10 @@ class BayesGPU:
         self.process_peaks = mod.get_function('process_peaks')
 
     def run_bayesfit(self, samples, lagmask):
-        lagmask = np.int32(lagmask)
-        cuda.memcpy_htod(self.samples_gpu, samples)
-        cuda.memcpy_htod(self.lagmask_gpu, lagmask)
+        self.lagmask = np.int32(lagmask)
+        self.samples = samples
+        cuda.memcpy_htod(self.samples_gpu, self.samples)
+        cuda.memcpy_htod(self.lagmask_gpu, self.lagmask)
     
         # about 90% of the time is spent on calc_bayes
         self.calc_bayes(self.samples_gpu, self.lagmask_gpu, self.ce_gpu, self.se_gpu, self.CS_f_gpu, self.R_f_gpu, self.I_f_gpu, self.hbar2_gpu, self.P_f_gpu, self.env_model, self.nlags, self.nalfs, self.n_good_lags_gpu, block = (int(self.nfreqs),1,1), grid = (int(self.npulses),1,1))
@@ -329,6 +361,9 @@ class BayesGPU:
 
     
     def process_bayesfit(self, tfreq, noise):
+        self.tfreq = tfreq
+        self.noise = noise
+
         cuda.memcpy_dtoh(self.amplitudes, self.amplitudes_gpu)
         cuda.memcpy_dtoh(self.alf_fwhm, self.alf_fwhm_gpu)
         cuda.memcpy_dtoh(self.freq_fwhm, self.freq_fwhm_gpu)
@@ -360,68 +395,129 @@ class BayesGPU:
         self.vfreq = (self.freqs[v_idx])
         self.walf = (self.alfs[w_idx])
 
+    # pickle a pulse for later analysis
+    def pickle_pulse(self, filename='pulse.p'):
+        import pickle
+        param = {}
+        param['alfs'] = self.alfs
+        param['freqs'] = self.freqs
+        param['samples'] = self.samples
+        param['lagmask'] = self.lagmask
+        param['lags'] = self.lags
+        param['npulses'] = self.npulses
+        param['env_model'] = self.env_model
+        param['tfreq'] = self.tfreq
+        param['noise'] = self.noise
+        pickle.dump(param, open(filename, 'wb'))
+
+
 # example function to run cuda_bayes against some generated data
 # to profile, add @profile atop interesting functions       
 # run kernprof -l cuda_bayes.py
 # then python -m line_profiler cuda_bayes.py.lprof to view results
 def main():
-    fs = 100.
-    ts = 1./fs
+    SYNTHETIC = True 
 
-    f = [30.]
-    amp = [10.]
-    alf = [10.]
-    lags = np.arange(0, 25) * ts
-    signal=[]
+    if SYNTHETIC:
+        fs = 100.
+        ts = 1./fs
 
-    MAXPULSES = 100
-    TFREQ = 30 
-    NOISE = .1
-    
-    lagmask = np.tile(np.ones(len(lags)), MAXPULSES)
-    
-    F = f[0]+0.1*np.random.randn()
-    U = alf[0]+0.1*np.random.randn()
-    A = amp[0]+0.1*np.random.rand()
-   
-    noise_power = 0
+        f = [0]
+        amp = [10.]
+        alf = [5]
+        lags = np.arange(0, 8) * ts
+        signal=[]
 
-    for t,lag in enumerate(lags):
-        N_I=NOISE*np.random.randn()
-        N_Q=NOISE*np.random.randn()
-        N_A=np.sqrt(N_I**2+N_Q**2)
-        noise_power += N_A
-        N_phase=np.tan(N_Q/N_I)
-        sig=A * np.exp(1j * 2 * np.pi * F * lag) * np.exp(-U * lag)+N_A*np.exp(1j*N_phase)
-        signal.append(sig)
-    
-    samples = np.tile(np.float32(list(chain.from_iterable(izip(np.real(signal), np.imag(signal))))), MAXPULSES)
+        maxpulses = 2
+        tfreq = 30 
+        noise = 1e-6#0.001
+        env_model = LAMBDA_FIT 
+        lagmask = np.tile(np.ones(len(lags)), maxpulses)
+        
+        F = f[0]+noise*np.random.randn()
+        U = alf[0]+noise*np.random.randn()
+        A = amp[0]+noise*np.random.rand()
+       
 
-    freqs = np.linspace(-fs/2, fs/2, 256)
-    alfs = np.linspace(0,fs/2., 128)
-    
-    gpu = BayesGPU(lags, freqs, alfs, MAXPULSES, LAMBDA_FIT)
+        for t,lag in enumerate(lags):
+            N_I=noise*np.random.randn()
+            N_Q=noise*np.random.randn()
+            N_A=np.sqrt(N_I**2+N_Q**2)
+            N_phase=np.tan(N_Q/N_I)
+            N_phase=0#np.tan(N_Q/N_I)
+            sig=A * np.exp(1j * 2 * np.pi * F * lag) * np.exp(-U * lag)#N_A*np.exp(1j*N_phase)
+            signal.append(sig)
+        
+        samples = np.tile(np.float32(list(chain.from_iterable(izip(np.real(signal), np.imag(signal))))), maxpulses)
+
+        freqs = np.linspace(-fs/20, fs/20, 512)
+        freqs = np.linspace(0, 0, 16)
+        alfs = np.linspace(0,fs/2, 256)
+        alfs = np.linspace(0,2, 16)
+
+    else: 
+        import pickle
+        param = pickle.load(open('pulse.p', 'rb'))
+        lags = param['lags']
+        freqs = param['freqs']
+        alfs = param['alfs']
+        maxpulses = param['npulses']
+        env_model = param['env_model']
+        samples = param['samples']
+        lagmask = param['lagmask']
+        tfreq = param['tfreq']
+        noise = param['noise']
+
+    gpu = BayesGPU(lags, freqs, alfs, maxpulses, env_model)
     gpu.run_bayesfit(samples, lagmask)
-    gpu.process_bayesfit(TFREQ, NOISE)
+    gpu.process_bayesfit(tfreq, noise)
     
-    print 'calculated amplitude: ' + str(gpu.amplitudes[0]) 
-    print 'actual amplitude: ' + str(amp[0])
+    rgate = 1
 
-    print 'calculated freq: ' + str(gpu.vfreq[0]) 
-    print 'actual freq: ' + str(f[0])
- 
-    print 'calculated decay: ' + str(gpu.walf[0]) 
-    print 'actual decay: ' + str(alf[0])
+    print 'calculated amplitude: ' + str(gpu.amplitudes[rgate]) 
+    print 'calculated freq: ' + str(gpu.vfreq[rgate]) 
+    print 'calculated decay: ' + str(gpu.walf[rgate]) 
     
-    print 'snr: ' + str(gpu.snr[0])
+    print 'snr: ' + str(gpu.snr[rgate])
+    if not SYNTHETIC: 
+        i_samp = samples[rgate][0::2]
+        q_samp = samples[rgate][1::2]
+        plt.plot(gpu.lags[np.nonzero(i_samp)], i_samp[np.nonzero(i_samp)])
+        plt.plot(gpu.lags[np.nonzero(q_samp)], q_samp[np.nonzero(q_samp)])
+    else:
+        plt.plot(gpu.lags, np.real(signal))
+        plt.plot(gpu.lags, np.imag(signal))
+        print 'actual decay: ' + str(alf[0])
+        print 'actual freq: ' + str(f[0])
+        print 'actual amplitude: ' + str(amp[0])
+   
+    samples_cpu = np.array(samples[0:int(len(samples)/maxpulses):2]) + 1j * np.array(samples[1:int(len(samples)/maxpulses):2])
+    R_f_cpu, I_f_cpu, hbar2_cpu, P_f_cpu = calculate_bayes(samples_cpu, lags, freqs, alfs, env_model)
 
-    plt.plot(np.real(signal))
-    plt.plot(np.imag(signal))
-    fit=gpu.amplitudes[0] * np.exp(1j * 2 * np.pi * gpu.vfreq[0] * lags) * np.exp(-gpu.walf[0] * lags)
-    plt.plot(np.real(fit), '-')
-    plt.plot(np.imag(fit), '-')
-    plt.show()
     pdb.set_trace()
+    if max(P_f_cpu.flatten() - gpu.P_f[0:(len(freqs) * len(alfs))].flatten()) < 1e-6:
+        print 'P_f on GPU and CPU match'
+    else:
+        print 'P_f calculation error! GPU and CPU matricies do not match'
+
+    fit = gpu.amplitudes[rgate] * np.exp(1j * 2 * np.pi * gpu.vfreq[rgate] * lags) * np.exp(-gpu.walf[rgate] * lags)
+    expected = amp[0] * np.exp(1j * 2 * np.pi * f[0] * lags) * np.exp(-alf[0] * lags)
+    #plt.plot(gpu.lags, np.real(fit))
+    #plt.plot(gpu.lags, np.imag(fit))
+
+    #plt.plot(lags, np.real(expected)+.025)
+    #plt.plot(lags, np.imag(expected))
+    
+    #plt.plot(lags, amp[0] * ce_matrix[0][:,7] + .05)
+    #plt.legend(['samp_i', 'samp_q', 'fit_i', 'fit_q', 'expected_i', 'expected_q', 'ce_matrix'])
+    #plt.show()
+    
+
+    cuda.memcpy_dtoh(gpu.P_f, gpu.P_f_gpu)
+
+    pdb.set_trace()
+    #plt.imshow(gpu.P_f[rgate])
+    #plt.show()
 
 if __name__ == '__main__':
     main()
