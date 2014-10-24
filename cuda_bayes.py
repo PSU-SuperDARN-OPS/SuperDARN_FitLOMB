@@ -96,10 +96,6 @@ __global__ void calc_bayes(float *samples, int32_t *lags, float *ce_matrix, floa
                                 s_samples[sample_offset + IMAG] * se_matrix[CS_offset];
             I_f[RI_offset] +=   s_samples[sample_offset + REAL] * se_matrix[CS_offset] - \
                                 s_samples[sample_offset + IMAG] * ce_matrix[CS_offset];
-            if(threadIdx.x == 0) {
-                printf("ce_matrix[%d] = %.3f\\n", CS_offset, ce_matrix[CS_offset]);
-            }
-
         }
 
         hbar2[RI_offset] = ((pow(R_f[RI_offset],2) / s_cs_f[i]) + \
@@ -114,9 +110,6 @@ __global__ void calc_bayes(float *samples, int32_t *lags, float *ce_matrix, floa
 
     if(threadIdx.x == 0) {
         samplebase = blockIdx.x * nsamples * 2; 
-        for(i = 0; i < nsamples; i++) {
-           printf("sample[%d] = %.3f, %.2f\\n", i, s_samples[2*i], s_samples[2*i+1]);
-        }
     }
 
 }
@@ -494,30 +487,29 @@ def main():
     samples_cpu = np.array(samples[0:int(len(samples)/maxpulses):2]) + 1j * np.array(samples[1:int(len(samples)/maxpulses):2])
     R_f_cpu, I_f_cpu, hbar2_cpu, P_f_cpu = calculate_bayes(samples_cpu, lags, freqs, alfs, env_model)
 
-    pdb.set_trace()
-    if max(P_f_cpu.flatten() - gpu.P_f[0:(len(freqs) * len(alfs))].flatten()) < 1e-6:
+    fit = gpu.amplitudes[rgate] * np.exp(1j * 2 * np.pi * gpu.vfreq[rgate] * lags) * np.exp(-gpu.walf[rgate] * lags)
+    expected = amp[0] * np.exp(1j * 2 * np.pi * f[0] * lags) * np.exp(-alf[0] * lags)
+    plt.plot(gpu.lags, np.real(fit))
+    plt.plot(gpu.lags, np.imag(fit))
+
+    plt.plot(lags, np.real(expected)+.025)
+    plt.plot(lags, np.imag(expected))
+    
+    #plt.plot(lags, amp[0] * ce_matrix[0][:,7] + .05)
+    plt.legend(['samp_i', 'samp_q', 'fit_i', 'fit_q', 'expected_i', 'expected_q', 'ce_matrix'])
+    plt.show()
+    
+
+    cuda.memcpy_dtoh(gpu.P_f, gpu.P_f_gpu)
+    if max(P_f_cpu.flatten() - gpu.P_f.flatten()[0:(len(freqs) * len(alfs))]) < 1e-6:
         print 'P_f on GPU and CPU match'
     else:
         print 'P_f calculation error! GPU and CPU matricies do not match'
 
-    fit = gpu.amplitudes[rgate] * np.exp(1j * 2 * np.pi * gpu.vfreq[rgate] * lags) * np.exp(-gpu.walf[rgate] * lags)
-    expected = amp[0] * np.exp(1j * 2 * np.pi * f[0] * lags) * np.exp(-alf[0] * lags)
-    #plt.plot(gpu.lags, np.real(fit))
-    #plt.plot(gpu.lags, np.imag(fit))
-
-    #plt.plot(lags, np.real(expected)+.025)
-    #plt.plot(lags, np.imag(expected))
-    
-    #plt.plot(lags, amp[0] * ce_matrix[0][:,7] + .05)
-    #plt.legend(['samp_i', 'samp_q', 'fit_i', 'fit_q', 'expected_i', 'expected_q', 'ce_matrix'])
-    #plt.show()
-    
-
-    cuda.memcpy_dtoh(gpu.P_f, gpu.P_f_gpu)
 
     pdb.set_trace()
-    #plt.imshow(gpu.P_f[rgate])
-    #plt.show()
+    plt.imshow(gpu.P_f[rgate])
+    plt.show()
 
 if __name__ == '__main__':
     main()

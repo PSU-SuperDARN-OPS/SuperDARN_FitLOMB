@@ -108,14 +108,14 @@ def createMergefile(radar, starttime, endtime, datadir):
     filename = radar + starttime.strftime('%Y%m%d') + 'to' + endtime.strftime('%Y%m%d') + '.hdf5'
     mergefile = h5py.File(datadir + filename, 'w')
     while starttime < endtime:
-        globname = datadir + starttime.strftime('%Y%m%d.*.' + radar + '.fitlomb.hdf5') 
+        globname = datadir + starttime.strftime('/%Y/%m.%d/%Y%m%d.*.' + radar + '.fitlomb.hdf5') 
         hdf5files = glob.glob(globname)
         for h5f in hdf5files:
             try:
                 f = h5py.File(h5f, 'r')
                 for pulse in f['/']:
                     dset = pulse 
-                    mergefile[dset] = h5py.ExternalLink(h5f.split('/')[-1], dset)
+                    mergefile[dset] = h5py.ExternalLink(h5f.split('//')[-1], dset) # I've made a terrible mistake..
 
                 f.close()
             except:
@@ -304,8 +304,8 @@ def remask(lombfit, starttime, endtime, beams, pmin, qwmin, qvmin, wmax, wmin, v
                 pul['qflg'][:,:] = qmask
     else:
         for (i,pul) in enumerate(pulses):
-                    qmask = (50 * np.log10(pul['fit_snr_l'][...]) > .05 )
-                    pul['qflg'][:,:] = qmask
+            qmask = (50 * np.log10(pul['fit_snr_l'][...]) > .05 )
+            pul['qflg'][:,:] = qmask
 
 
 
@@ -322,52 +322,17 @@ def PlotTime(radar, starttime, endtime, directory, beams):
 
     plot_vector(lombfit, beams, 'v_e' , '', starttime, endtime, vmax = 300, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
     plot_vector(lombfit, beams, 'w_l_e' , '', starttime, endtime, vmax = 400, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
-    plot_vector(lombfit, beams, 'r2_phase_l' , '', starttime, endtime, vmax = 1, vmin = -1, cmap = plt.cm.get_cmap("SD_V"), image=True)
+    #plot_vector(lombfit, beams, 'r2_phase_l' , '', starttime, endtime, vmax = 1, vmin = -1, cmap = plt.cm.get_cmap("SD_V"), image=True)
     lombfit.close()
 
 if __name__ == '__main__':
     prettyify() # set matplotlib parameters for larger text
 
-    plot_times = {datetime.datetime(2014,2,26,0,00) : datetime.datetime(2014,2,26,8)}
-
+    plot_times = {datetime.datetime(2014,3,01,0,00) : datetime.datetime(2014,3,01,1)}
     
-    # set of times to plot, start:stop
-    '''    
-    plot_times = {\
-        # BRN times
-        datetime.datetime(2014,04,17,1,20) : datetime.datetime(2014,04,17,2,20), \
-        datetime.datetime(2014,04,18,0,30) : datetime.datetime(2014,04,18,2,00), \
-        datetime.datetime(2014,04,19,0,30) : datetime.datetime(2014,04,19,1,55), \
-        datetime.datetime(2014,04,19,23,45) : datetime.datetime(2014,04,20,1,15), \
-        datetime.datetime(2014,04,21,2,00) : datetime.datetime(2014,04,21,3,20), \
-        # BRN-ePOP times
-        datetime.datetime(2014,04,17,4,40) : datetime.datetime(2014,04,17,5,00), \
-        datetime.datetime(2014,04,18,4,35) : datetime.datetime(2014,04,18,4,00), \
-        datetime.datetime(2014,04,19,4,35) : datetime.datetime(2014,04,19,4,55), \
-        datetime.datetime(2014,04,20,4,30) : datetime.datetime(2014,04,20,4,55), \
-        datetime.datetime(2014,04,21,4,30) : datetime.datetime(2014,04,20,4,50), \
-        # KND-HYS times
-        datetime.datetime(2014,04,21,6,50) : datetime.datetime(2014,04,21,7,50) \
-    }
-    
-    plot_zoomtimes = {\
-        # zoomed BRN times
-        datetime.datetime(2014,04,21,2,20) : datetime.datetime(2014,04,21,2,40), \
-        datetime.datetime(2014,04,21,2,40) : datetime.datetime(2014,04,21,3,00), \
-        datetime.datetime(2014,04,18,1,40) : datetime.datetime(2014,04,18,1,50), \
-        datetime.datetime(2014,04,18,1,50) : datetime.datetime(2014,04,18,2,00), \
-        datetime.datetime(2014,04,18,1,10) : datetime.datetime(2014,04,18,1,20), \
-        datetime.datetime(2014,04,19,1,15) : datetime.datetime(2014,04,19,1,27), \
-        datetime.datetime(2014,04,19,0,30) : datetime.datetime(2014,04,19,0,50), \
-        datetime.datetime(2014,04,19,0,00) : datetime.datetime(2014,04,19,0,30), \
-        datetime.datetime(2014,04,17,1,00) : datetime.datetime(2014,04,17,1,40)
-    }
-    '''
-    plot_zoomtimes = {}
-    TIMEINT = 120 #
+    TIMEINT = 10 #
 
-    RADARS = ['ade.a', 'ksr.a', 'pgr', 'cve']
-    RADARS = ['kod.d', 'kod.c']
+    RADARS = ['ksr.a']
 
     for radar in RADARS:
         for stime in plot_times.keys():
@@ -384,27 +349,5 @@ if __name__ == '__main__':
                 #    pass
                 #RADAR = 'kod.d'
                 #PlotTime(RADAR, stime, plot_times[stime], DATADIR, ALLBEAMS)
-
-    TIMEINT = 1
-    MINRANGE = 0 
-    MAXRANGE = 3000
-    
-
-    for stime in plot_zoomtimes.keys():
-        print 'plotting '  + str(stime)
-        try:
-
-            RADAR = 'kod.c'
-            PlotTime(RADAR, stime, plot_zoomtimes[stime], DATADIR, ['3'])
-
-            RADAR = 'kod.d'
-            PlotTime(RADAR, stime, plot_zoomtimes[stime], DATADIR, ALLBEAMS)
-
-
-        except:
-            plt.clf()
-            pass
-        #RADAR = 'kod.d'
-        #PlotTime(RADAR, stime, plot_times[stime], DATADIR, ALLBEAMS)
-
+   
 

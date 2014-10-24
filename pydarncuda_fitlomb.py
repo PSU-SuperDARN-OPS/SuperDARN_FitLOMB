@@ -277,22 +277,26 @@ class CULombFit:
     def CalcLags(self):
         self.lags = np.float32(np.array(map(lambda x : abs(x[1]-x[0]), self.ltab[0:self.mplgs])) * (self.mpinc / 1e6))
 
-    def CudaCopyPeaks(self, gpu):
+    def CudaCopyPeaks(self, gpu, itr = 0):
+
         if gpu.env_model == LAMBDA_FIT:
-            self.w_l = gpu.w 
-            self.w_l_std = gpu.w_std
-            self.w_l_e = gpu.w_e
+
+            self.w_l[:,itr] = gpu.w 
+
+            self.w_l_std[:,itr] = gpu.w_std
+            self.w_l_e[:,itr] = gpu.w_e
  
-            self.v_l = gpu.v 
-            self.v_l_std = gpu.v_std
-            self.v_l_e = gpu.v_e
+            self.v_l[:,itr] = gpu.v 
+            self.v_l_std[:,itr] = gpu.v_std
+            self.v_l_e[:,itr] = gpu.v_e
 
-            self.p_l = gpu.p
-            self.fit_snr_l = gpu.snr # record ratio of power in signal versus power in fitted signal
+            self.p_l[:,itr] = gpu.p
+            self.fit_snr_l[:,itr] = gpu.snr # record ratio of power in signal versus power in fitted signal
             
-            self.iflg = (abs(self.v_l) - (self.v_thresh - (self.v_thresh / self.w_thresh) * abs(self.w_l)) > 0) 
+            iflg = (abs(self.v_l) - (self.v_thresh - (self.v_thresh / self.w_thresh) * abs(self.w_l)) > 0) 
+            self.iflg[:,itr][iflg[:,0]] = 1
 
-            self.qflg = (self.p_l > self.qpwr_thresh) * \
+            qflg = (self.p_l > self.qpwr_thresh) * \
                         (self.w_l_e < self.qwle_thresh) * \
                         (self.v_l_e < self.qvle_thresh) * \
                         (self.w_l < self.wimax_thresh) * \
@@ -301,17 +305,19 @@ class CULombFit:
                         (self.fit_snr_l <= self.snr_thresh) * \
                         (self.v_l > -self.vimax_thresh)
 
-        elif gpu.env_model == SIGMA_FIT:
-            self.w_s = gpu.w 
-            self.w_s_std = gpu.w_std
-            self.w_s_e = gpu.w_e
- 
-            self.v_s = gpu.v 
-            self.v_s_std = gpu.v_std
-            self.v_s_e = gpu.v_e
+            self.qflg[:,itr][qflg[:,0]] = 1
 
-            self.p_s = gpu.p
-            self.fit_snr_s = gpu.snr
+        elif gpu.env_model == SIGMA_FIT:
+            self.w_s[:, itr] = gpu.w 
+            self.w_s_std[:,itr] = gpu.w_std
+            self.w_s_e[:,itr] = gpu.w_e
+ 
+            self.v_s[:,itr] = gpu.v 
+            self.v_s_std[:,itr] = gpu.v_std
+            self.v_s_e[:,itr] = gpu.v_e
+
+            self.p_s[:,itr] = gpu.p
+            self.fit_snr_s[:,itr] = gpu.snr
         
         else:
             print 'error - unknown environment model'
@@ -339,7 +345,6 @@ class CULombFit:
             plt.plot(np.real(signal))
             plt.plot(np.imag(signal))
             plt.show()
-            pdb.set_trace()
 
 
     def CalcNoise(self):
@@ -497,8 +502,8 @@ def main():
                 fit.CudaCopyPeaks(gpu_lambda)
                 fit.CudaCopyPeaks(gpu_sigma)
                 fit.WriteLSSFit(hdf5file) # 4 %
-                fit.CudaPlotFit(gpu_lambda)
-	    except:
+                #fit.CudaPlotFit(gpu_lambda)
+	    except None:
 		print 'error fitting file, skipping record at ' + str(fit.recordtime) 
 
             #print 'computed ' + str(fit.recordtime)
