@@ -23,7 +23,7 @@ mod = pycuda.compiler.SourceModule("""
 #define REAL 0
 #define IMAG 1
 #define MAX_SAMPLES 25
-#define MAX_ALPHAS 256 // MUST BE A POWER OF 2
+#define MAX_ALPHAS 512 // MUST BE A POWER OF 2
 #define MAX_FREQS 512 // MUST BE A POWER OF 2
 #define PI (3.141592)
 
@@ -409,15 +409,16 @@ class BayesGPU:
 # run kernprof -l cuda_bayes.py
 # then python -m line_profiler cuda_bayes.py.lprof to view results
 def main():
-    SYNTHETIC = True 
+    SYNTHETIC = False 
+
+    f = [4]
+    amp = [27000.]
+    alf = [30]
 
     if SYNTHETIC:
         fs = 100.
         ts = 1./fs
 
-        f = [0]
-        amp = [10.]
-        alf = [5]
         lags = np.arange(0, 16) * ts
         signal=[]
 
@@ -465,7 +466,7 @@ def main():
     gpu.run_bayesfit(samples, lagmask)
     gpu.process_bayesfit(tfreq, noise)
     
-    rgate = 1
+    rgate = 11
 
     print 'calculated amplitude: ' + str(gpu.amplitudes[rgate]) 
     print 'calculated freq: ' + str(gpu.vfreq[rgate]) 
@@ -484,15 +485,16 @@ def main():
         print 'actual freq: ' + str(f[0])
         print 'actual amplitude: ' + str(amp[0])
    
-    samples_cpu = np.array(samples[0:int(len(samples)/maxpulses):2]) + 1j * np.array(samples[1:int(len(samples)/maxpulses):2])
-    R_f_cpu, I_f_cpu, hbar2_cpu, P_f_cpu = calculate_bayes(samples_cpu, lags, freqs, alfs, env_model)
+    #samples_cpu = np.array(samples[0:int(len(samples)/maxpulses):2]) + 1j * np.array(samples[1:int(len(samples)/maxpulses):2])
+    #pdb.set_trace()
+    #R_f_cpu, I_f_cpu, hbar2_cpu, P_f_cpu = calculate_bayes(samples_cpu, lags, freqs, alfs, env_model)
 
     fit = gpu.amplitudes[rgate] * np.exp(1j * 2 * np.pi * gpu.vfreq[rgate] * lags) * np.exp(-gpu.walf[rgate] * lags)
     expected = amp[0] * np.exp(1j * 2 * np.pi * f[0] * lags) * np.exp(-alf[0] * lags)
     plt.plot(gpu.lags, np.real(fit))
     plt.plot(gpu.lags, np.imag(fit))
 
-    plt.plot(lags, np.real(expected)+.025)
+    plt.plot(lags, np.real(expected))
     plt.plot(lags, np.imag(expected))
     
     #plt.plot(lags, amp[0] * ce_matrix[0][:,7] + .05)
@@ -501,15 +503,19 @@ def main():
     
 
     cuda.memcpy_dtoh(gpu.P_f, gpu.P_f_gpu)
-    
+    ''' 
     if max(P_f_cpu.flatten() - gpu.P_f.flatten()[0:(len(freqs) * len(alfs))]) < 3e-6:
         print 'P_f on GPU and CPU match'
     else:
         print 'P_f calculation error! GPU and CPU matricies do not match'
-
+    '''
 
     plt.imshow(gpu.P_f[rgate])
     plt.show()
+    # peak about 18 260
+    # freq 260
+    # alf 18
+    pdb.set_trace()
 
 if __name__ == '__main__':
     main()

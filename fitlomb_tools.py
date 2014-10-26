@@ -11,6 +11,7 @@ import matplotlib.dates as dates
 import numpy as np
 import glob
 import time 
+import pdb
 
 BEAMS = 16
 MAX_LOMBDEPTH = 1
@@ -99,7 +100,7 @@ def getParam(lombfit, beam, param, starttime, endtime,  maskparam = False, blank
     return times, ranges, rtiparam 
 
 # creates a file with all data from a radar in a folder using soft links
-def createMergefile(radar, starttime, endtime, datadir):
+def createMergefile(radar, starttime, endtime, datadir, beams = None):
     # todo: work with starttime and endttime datetimes
     
     # for each day between starttime and endtime
@@ -114,8 +115,9 @@ def createMergefile(radar, starttime, endtime, datadir):
             try:
                 f = h5py.File(h5f, 'r')
                 for pulse in f['/']:
-                    dset = pulse 
-                    mergefile[dset] = h5py.ExternalLink(h5f.split('//')[-1], dset) # I've made a terrible mistake..
+                    if beams == None or f[pulse].attrs['bmnum'] in beams:
+                        dset = pulse
+                        mergefile[dset] = h5py.ExternalLink(h5f.split('//')[-1], dset) # I've made a terrible mistake..
 
                 f.close()
             except:
@@ -310,7 +312,7 @@ def remask(lombfit, starttime, endtime, beams, pmin, qwmin, qvmin, wmax, wmin, v
 
 
 def PlotTime(radar, starttime, endtime, directory, beams):
-    mergefile = createMergefile(RADAR, starttime, endtime, DATADIR)
+    mergefile = createMergefile(RADAR, starttime, endtime, DATADIR, beams)
     lombfit = h5py.File(mergefile, 'r+')
     #remask(lombfit, starttime, endtime, beams, PMIN, QWMIN, QVMIN, WMAX, WMIN, VMAX, VMIN, median = False, snr = False)
     plot_vector(lombfit, beams, 'fit_snr_l' , '', starttime, endtime, vmax = 10, vmin = 0, cmap = POWER_CMAP, image=True, scale = dbscale)
@@ -330,10 +332,10 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
 
-    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.03.01.00")
-    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.03.02.00")
+    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.03.01.12")
+    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.03.01.13")
     parser.add_argument("--radar", help="radar to create data from", default='mcm.a')
-    parser.add_argument("--beam", help="beam to plot", default=3)
+    parser.add_argument("--beam", help="beam to plot", default=9)
 
     args = parser.parse_args()
 

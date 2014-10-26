@@ -29,11 +29,11 @@ FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 2000 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 1500 # m/s, max spectral width to include in lomb 
 NFREQS = 512
-NALFS = 256
+NALFS = 512 
 MAXPULSES = 300
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
-SNR_THRESH = 1 # ratio of power in fitted signal and residual 
+SNR_THRESH = .25 # minimum ratio of power in fitted signal and residual for a qualtiy fit
 C = 3e8
 MAX_TFREQ = 16e6
 
@@ -107,9 +107,9 @@ class CULombFit:
         self.w_thresh = 90. # blanchard, 2009
         
         # threshold on power (snr), spectral width std error m/s, and velocity std error m/s for quality flag
-        self.qwle_thresh = 80
-        self.qvle_thresh = 80
-        self.qpwr_thresh = 2
+        self.qwle_thresh = 100
+        self.qvle_thresh = 100
+        self.qpwr_thresh = .5
         self.snr_thresh = SNR_THRESH 
         # thresholds on velocity and spectral width for ionospheric scatter flag (m/s)
         self.wimin_thresh = 100
@@ -230,8 +230,7 @@ class CULombFit:
             add_compact_dset(hdf5file, groupname, 'v_s_std', np.float64(self.v_s_std), h5py.h5t.NATIVE_DOUBLE)
             add_compact_dset(hdf5file, groupname, 'fit_snr_s', np.float64(self.fit_snr_s), h5py.h5t.NATIVE_DOUBLE)
             #add_compact_dset(hdf5file, groupname, 'r2_phase_s', np.float64(self.r2_phase_s), h5py.h5t.NATIVE_DOUBLE)
-
-#    @profile 
+        #    @profile 
     def CudaProcessPulse(self, gpu):
         lagsmask = []
         isamples = np.zeros([len(self.ranges), 2 * gpu.nlags])
@@ -295,15 +294,14 @@ class CULombFit:
             
             iflg = (abs(self.v_l) - (self.v_thresh - (self.v_thresh / self.w_thresh) * abs(self.w_l)) > 0) 
             self.iflg[:,itr][iflg[:,0]] = 1
-
             qflg = (self.p_l > self.qpwr_thresh) * \
-                        (self.w_l_e < self.qwle_thresh) * \
-                        (self.v_l_e < self.qvle_thresh) * \
-                        (self.w_l < self.wimax_thresh) * \
-                        (self.v_l < self.vimax_thresh) * \
-                        (self.w_l > -self.wimax_thresh) * \
-                        (self.fit_snr_l <= self.snr_thresh) * \
-                        (self.v_l > -self.vimax_thresh)
+                   (self.w_l_e < self.qwle_thresh) * \
+                   (self.v_l_e < self.qvle_thresh) * \
+                   (self.w_l < self.wimax_thresh) * \
+                   (self.v_l < self.vimax_thresh) * \
+                   (self.w_l > -self.wimax_thresh) * \
+                   (self.fit_snr_l >= self.snr_thresh) * \
+                   (self.v_l > -self.vimax_thresh)
 
             self.qflg[:,itr][qflg[:,0]] = 1
 
@@ -419,8 +417,8 @@ def add_compact_dset(hdf5file, group, dsetname, data, dtype, mask = []):
 def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
-    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.03.01.00")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.04.01.00")
+    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.01.0000", default = "2014.03.01.0000")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.08.1200", default = "2014.04.01.0000")
 
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
     parser.add_argument("--radar", help="radar to create data from", default='mcm.a') 
@@ -430,8 +428,8 @@ def main():
     args = parser.parse_args() 
     
     # parse date string and convert to datetime object
-    starttime = datetime.datetime(*time.strptime(args.starttime, "%Y.%m.%d.%H")[:6])
-    endtime = datetime.datetime(*time.strptime(args.endtime, "%Y.%m.%d.%H")[:6])
+    starttime = datetime.datetime(*time.strptime(args.starttime, "%Y.%m.%d.%H%M")[:7])
+    endtime = datetime.datetime(*time.strptime(args.endtime, "%Y.%m.%d.%H%M")[:7])
 
     # sanity check arguements
     if args.recordlen > 24 or args.recordlen <= 0:
@@ -448,7 +446,7 @@ def main():
 
     while starttime < endtime:
         stime = starttime
-        etime = stime + datetime.timedelta(hours = args.recordlen)
+        etime = min(stime + datetime.timedelta(hours = args.recordlen), endtime)
 
         print 'computing from ' + str(stime) + ' to ' + str(etime)
         starttime = etime
@@ -502,8 +500,13 @@ def main():
                 fit.CudaCopyPeaks(gpu_lambda)
                 fit.CudaCopyPeaks(gpu_sigma)
                 fit.WriteLSSFit(hdf5file) # 4 %
+
+                '''if calendar.timegm(fit.recordtime.timetuple()) == 1393676837:
+                    import pdb
+                    pdb.set_trace()'''
+
                 #fit.CudaPlotFit(gpu_lambda)
-	    except None:
+	    except:
 		print 'error fitting file, skipping record at ' + str(fit.recordtime) 
 
             #print 'computed ' + str(fit.recordtime)
