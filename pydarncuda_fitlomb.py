@@ -14,6 +14,8 @@ import h5py
 import lagstate
 import pdb
 import os
+from multiprocessing import Pool, Lock
+
 from cuda_bayes import BayesGPU
 
 FITLOMB_REVISION_MAJOR = 2
@@ -36,7 +38,7 @@ SIGMA_FIT = 2
 SNR_THRESH = .25 # minimum ratio of power in fitted signal and residual for a qualtiy fit
 C = 3e8
 MAX_TFREQ = 16e6
-
+POOL_SIZE = 2 # maximum pool size for multiprocessing of fits..
 CALC_SIGMA = True 
 
 GROUP_ATTR_TYPES = {\
@@ -413,45 +415,18 @@ def add_compact_dset(hdf5file, group, dsetname, data, dtype, mask = []):
     dset = h5py.h5d.create(hdf5file.id, dsetname, dtype, space_id, dcpl)
     dset.write(h5py.h5s.ALL, h5py.h5s.ALL, data)
 
-#@profile
-def main():
-    parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
-    
-    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.01.0000", default = "2014.03.01.0000")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.08.1200", default = "2014.04.01.0000")
+# worker function to fitlomb process a block of time
+def generate_fitlomb(record):
+        # unpack record tuple (passing multiple arguements with map is awkward..)
+        stime, etime, radar, lock = record
 
-    parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
-    parser.add_argument("--radar", help="radar to create data from", default='mcm.a') 
+        print 'worker computing from ' + str(stime) + ' to ' + str(etime)
+        # lock so multiple processes don't step over eachother unpacking and copying rawacfs to /tmp 
+        lock.acquire()
+        myPtr = sdio.radDataOpen(stime,radar,eTime=etime,channel=None,bmnum=None,cp=None,fileType='rawacf',filtered=False, src='local')
+        lock.release()
 
-    # TODO: add channel/beam?
-
-    args = parser.parse_args() 
-    
-    # parse date string and convert to datetime object
-    starttime = datetime.datetime(*time.strptime(args.starttime, "%Y.%m.%d.%H%M")[:7])
-    endtime = datetime.datetime(*time.strptime(args.endtime, "%Y.%m.%d.%H%M")[:7])
-
-    # sanity check arguements
-    if args.recordlen > 24 or args.recordlen <= 0:
-        print 'recordlen arguement must be greater than 0 hours and less than or equal to 24 hours'
-        return
-
-    if not args.radar in ['ksr.a', 'kod.c', 'kod.d', 'sps.a', 'mcm.a', 'mcm.b', 'ade.a', 'adw.a']:
-        print 'sorry, only UAF radars with data on chiniak are currently supported'
-        return
-    
-    if starttime > endtime:
-        print 'start time is after end time..'
-        return
-
-    while starttime < endtime:
-        stime = starttime
-        etime = min(stime + datetime.timedelta(hours = args.recordlen), endtime)
-
-        print 'computing from ' + str(stime) + ' to ' + str(etime)
-        starttime = etime
-        myPtr = sdio.radDataOpen(stime,args.radar,eTime=etime,channel=None,bmnum=None,cp=None,fileType='rawacf',filtered=False, src='local')
-        outfilename = stime.strftime('%Y%m%d.%H%M.' + args.radar + '.fitlomb.hdf5') 
+        outfilename = stime.strftime('%Y%m%d.%H%M.' + radar + '.fitlomb.hdf5') 
         outfilepath = DATA_DIR + stime.strftime('%Y/%m.%d/') 
 
         if not os.path.exists(outfilepath):
@@ -471,7 +446,7 @@ def main():
         except:
             print 'error reading first rawacf record for ' + str(stime) + '... skipping to next record block'
             hdf5file.close() 
-            continue
+            return 
 
         gpu_lambda = None
         gpu_sigma = None
@@ -512,7 +487,55 @@ def main():
             #print 'computed ' + str(fit.recordtime)
 
             drec = sdio.radDataReadRec(myPtr) # ~ 15% of the time is spent here
+
         hdf5file.close() 
+
+
+#@profile
+def main():
+    parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
+    
+    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.01.0000", default = "2014.03.01.0000")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.08.1200", default = "2014.04.01.0000")
+
+    parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
+    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['mcm.a']) 
+
+    # TODO: add channel/beam?
+    args = parser.parse_args() 
+    
+    # parse date string and convert to datetime object
+    starttime = datetime.datetime(*time.strptime(args.starttime, "%Y.%m.%d.%H%M")[:7])
+    endtime = datetime.datetime(*time.strptime(args.endtime, "%Y.%m.%d.%H%M")[:7])
+
+    # sanity check arguements
+    if args.recordlen > 24 or args.recordlen <= 0:
+        print 'recordlen arguement must be greater than 0 hours and less than or equal to 24 hours'
+        return
+    if starttime > endtime:
+        print 'start time is after end time..'
+        return
+    
+    # compile list of start time/end time/radar/lock tuples 
+    lock = Lock()
+    records == []
+    for radar in args.radars:
+        if not radar in ['ksr.a', 'kod.c', 'kod.d', 'sps.a', 'mcm.a', 'mcm.b', 'ade.a', 'adw.a']:
+            print 'only UAF radars with data on chiniak are currently supported, skipping ' + radar
+            continue
+
+        while starttime < endtime:
+            stime = starttime
+            etime = min(stime + datetime.timedelta(hours = args.recordlen), endtime)
+            recordtimes.append((stime, etime, radar, lock))
+            starttime = etime
+    
+    # run pool of records in parallel
+    # each worker takes 1 CPU and about 512 MB of GPU memory for 512x512 frequency/alpha resolution
+    # so, two workers on kodiak-devel
+    # i7 with a gtx970 could probably handle six
+    fitlomb_pool = Pool(processes = POOL_SIZE)
+    pool.map(generate_fitlomb, records)
 
 if __name__ == '__main__':
     main()
