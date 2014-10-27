@@ -332,8 +332,9 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
 
-    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.03.01.12")
-    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.03.01.13")
+    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.03.01.00")
+    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.03.29.00")
+    parser.add_argument("--maxplotlen", help="maximum length of a rti plot, in hours", default = 24)
     parser.add_argument("--radar", help="radar to create data from", default='mcm.a')
     parser.add_argument("--beam", help="beam to plot", default=9)
 
@@ -342,9 +343,20 @@ if __name__ == '__main__':
     # parse date string and convert to datetime object
     starttime = datetime.datetime(*time.strptime(args.starttime, "%Y.%m.%d.%H")[:6])
     endtime = datetime.datetime(*time.strptime(args.endtime, "%Y.%m.%d.%H")[:6])
+    
+    maxplotlen = datetime.timedelta(hours = args.maxplotlen)
 
-    plot_times = {starttime : endtime}
+    plot_times = {}
 
+    while starttime < endtime:
+        if starttime + maxplotlen >= endtime: 
+            plot_times[starttime] = endtime
+        
+        else:
+            plot_times[starttime] = (starttime + maxplotlen)
+
+        starttime = plot_times[starttime]
+    
     for radar in [args.radar]:
         for stime in plot_times.keys():
             timespan = (stime - plot_times[stime])

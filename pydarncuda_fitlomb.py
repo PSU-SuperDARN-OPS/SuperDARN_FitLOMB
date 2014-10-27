@@ -14,12 +14,11 @@ import h5py
 import lagstate
 import pdb
 import os
-from multiprocessing import Pool, Lock
+from multiprocessing import Pool, Manager 
 
-from cuda_bayes import BayesGPU
 
 FITLOMB_REVISION_MAJOR = 2
-FITLOMB_REVISION_MINOR = 1
+FITLOMB_REVISION_MINOR = 2
 ORIGIN_CODE = 'pydarncuda_fitlomb.py'
 DATA_DIR = '/home/radar/fitlomb/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
@@ -31,7 +30,7 @@ FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 2000 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 1500 # m/s, max spectral width to include in lomb 
 NFREQS = 512
-NALFS = 512 
+NALFS = 256 
 MAXPULSES = 300
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
@@ -417,6 +416,8 @@ def add_compact_dset(hdf5file, group, dsetname, data, dtype, mask = []):
 
 # worker function to fitlomb process a block of time
 def generate_fitlomb(record):
+        from cuda_bayes import BayesGPU
+
         # unpack record tuple (passing multiple arguements with map is awkward..)
         stime, etime, radar, lock = record
 
@@ -495,15 +496,18 @@ def generate_fitlomb(record):
 def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
-    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.01.0000", default = "2014.03.01.0000")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.08.1200", default = "2014.04.01.0000")
+    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.01.0000", default = "2014.04.01.0000")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.08.1200", default = "2014.04.01.0100")
 
-    parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
+    parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=.1) 
     parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['mcm.a']) 
 
     # TODO: add channel/beam?
     args = parser.parse_args() 
     
+    import time
+    start = time.time()
+
     # parse date string and convert to datetime object
     starttime = datetime.datetime(*time.strptime(args.starttime, "%Y.%m.%d.%H%M")[:7])
     endtime = datetime.datetime(*time.strptime(args.endtime, "%Y.%m.%d.%H%M")[:7])
@@ -517,8 +521,10 @@ def main():
         return
     
     # compile list of start time/end time/radar/lock tuples 
-    lock = Lock()
-    records == []
+    manager = Manager()
+    lock = manager.Lock()
+    records = []
+
     for radar in args.radars:
         if not radar in ['ksr.a', 'kod.c', 'kod.d', 'sps.a', 'mcm.a', 'mcm.b', 'ade.a', 'adw.a']:
             print 'only UAF radars with data on chiniak are currently supported, skipping ' + radar
@@ -527,15 +533,24 @@ def main():
         while starttime < endtime:
             stime = starttime
             etime = min(stime + datetime.timedelta(hours = args.recordlen), endtime)
-            recordtimes.append((stime, etime, radar, lock))
+            records.append((stime, etime, radar, lock))
             starttime = etime
     
     # run pool of records in parallel
     # each worker takes 1 CPU and about 512 MB of GPU memory for 512x512 frequency/alpha resolution
     # so, two workers on kodiak-devel
     # i7 with a gtx970 could probably handle six
+    print 'starting fitlomb worker pool'
     fitlomb_pool = Pool(processes = POOL_SIZE)
-    pool.map(generate_fitlomb, records)
+    
+    for record in records:
+        fitlomb_pool.apply_async(func=generate_fitlomb, args=(record,))
+
+    fitlomb_pool.close()
+    print 'closing fitlomb worker pool'
+    fitlomb_pool.join()
+    print 'fitlomb workers finished...'
+    print 'that took: ' + str(time.time()-start) + ' seconds' 
 
 if __name__ == '__main__':
     main()
