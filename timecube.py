@@ -148,9 +148,31 @@ def make_hyperspacecube(tfreqs_hz,times_secs,fcrit_hz,Vlos_mps,alfs, env_model):
     # calculate C_f and S_f (14) and (15) in [4]
     # simultaneous sampling, so C_f and S_f reduce to the total power in envelope model
     z_matrix=np.ones((len(Vlos_mps),len(fcrit_hz),len(alfs)))
+
     for (k, alf) in enumerate(alfs):
         z_matrix[:,:,k] *= sum(envelope[k,:] ** 2)
-
     CS_f = z_matrix.T
 
     return ce_matrix, se_matrix, CS_f
+
+if __name__ == '__main__':
+    env_model = 1
+    fs = 100.
+    ts = 1./fs
+
+    freqs = np.linspace(-fs/2, fs/2, 16)
+    alfs = np.linspace(0,fs/2, 16)
+
+    lags = np.arange(0, 24) * ts
+    
+    lmask = [0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0]
+
+    ce_matrix, se_matrix, CS_f = make_spacecube(lags, freqs, alfs, env_model)
+    import pdb
+    pdb.set_trace()
+    print CS_f[:,0]
+    ''' [ 24.          19.25207407  15.73828838  13.10322194  11.09979817
+       9.55503758   8.34691265   7.38863827   6.61795938   5.98980989
+          5.47125489   5.03798619   4.67187934   4.35927957   4.08979102
+             3.85541536]
+             '''

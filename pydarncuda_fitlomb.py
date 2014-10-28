@@ -18,7 +18,7 @@ from multiprocessing import Pool, Manager
 
 
 FITLOMB_REVISION_MAJOR = 2
-FITLOMB_REVISION_MINOR = 2
+FITLOMB_REVISION_MINOR = 3
 ORIGIN_CODE = 'pydarncuda_fitlomb.py'
 DATA_DIR = '/home/radar/fitlomb/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
@@ -28,9 +28,9 @@ Q_OFFSET = 1
 
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 2000 # m/s, max velocity (doppler shift) to include in lomb
-MAX_W = 1500 # m/s, max spectral width to include in lomb 
+MAX_W = 1000 # m/s, max spectral width to include in lomb 
 NFREQS = 512
-NALFS = 256 
+NALFS = 512 
 MAXPULSES = 300
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
@@ -38,7 +38,7 @@ SNR_THRESH = .25 # minimum ratio of power in fitted signal and residual for a qu
 C = 3e8
 MAX_TFREQ = 16e6
 POOL_SIZE = 2 # maximum pool size for multiprocessing of fits..
-CALC_SIGMA = True 
+CALC_SIGMA = False 
 
 GROUP_ATTR_TYPES = {\
         'txpow':np.int16,\
@@ -450,7 +450,8 @@ def generate_fitlomb(record):
             return 
 
         gpu_lambda = None
-        gpu_sigma = None
+        if CALC_SIGMA:
+            gpu_sigma = None
 
         while drec != None:
             try:
@@ -462,19 +463,23 @@ def generate_fitlomb(record):
             # create velocity and spectral width space based on maximum transmit frequency
             if gpu_lambda == None:
                 gpu_lambda = BayesGPU(fit.lags, freqs, alfs, fit.nrang, LAMBDA_FIT)
-                gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
+                if CALC_SIGMA:
+                    gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
 
             # generate new caches on the GPU for the fit if the pulse sequence has changed 
             elif gpu_lambda.npulses != fit.nrang or (not np.array_equal(fit.lags, gpu_lambda.lags)):
                 gpu_lambda = BayesGPU(fit.lags, freqs, alfs, fit.nrang, LAMBDA_FIT)
-                gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
+                if CALC_SIGMA:
+                    gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
                 print 'the pulse sequence has changed'
            
             try:
                 fit.CudaProcessPulse(gpu_lambda) # ~ 50%
-                fit.CudaProcessPulse(gpu_sigma) # ~ 50%
+                if CALC_SIGMA:
+                    fit.CudaProcessPulse(gpu_sigma) # ~ 50%
                 fit.CudaCopyPeaks(gpu_lambda)
-                fit.CudaCopyPeaks(gpu_sigma)
+                if CALC_SIGMA:
+                    fit.CudaCopyPeaks(gpu_sigma)
                 fit.WriteLSSFit(hdf5file) # 4 %
 
                 '''if calendar.timegm(fit.recordtime.timetuple()) == 1393676837:
@@ -496,17 +501,20 @@ def generate_fitlomb(record):
 def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
-    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.01.0000", default = "2014.04.01.0000")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.08.1200", default = "2014.04.01.0100")
-
-    parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=.1) 
-    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['mcm.a']) 
+    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.01.0000", default = "2014.03.01.0000")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.08.1200", default = "2014.03.10.0000")
+    parser.add_argument("--enable_sigmafit", help="enable fitting sigma (p_s/v_s) parameters. this will double runtime and GPU VRAM usage", action='store_true', default=False) 
+    parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
+    parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default=POOL_SIZE) 
+    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['kod.d', 'kod.c', 'adw.a', 'ade.a', 'ksr.a', 'sps.a', 'mcm.a']) 
+    parser.add_argument("--datadir", help="base directory for .fitlomb files (defaults to /home/radar/fitlomb/)", default='/home/radar/fitlomb/') 
 
     # TODO: add channel/beam?
     args = parser.parse_args() 
     
-    import time
-    start = time.time()
+    # TODO: these probably shouldn't be global variables..
+    CALC_SIGMA = args.enable_sigmafit
+    DATA_DIR = args.datadir
 
     # parse date string and convert to datetime object
     starttime = datetime.datetime(*time.strptime(args.starttime, "%Y.%m.%d.%H%M")[:7])
@@ -526,8 +534,9 @@ def main():
     records = []
 
     for radar in args.radars:
-        if not radar in ['ksr.a', 'kod.c', 'kod.d', 'sps.a', 'mcm.a', 'mcm.b', 'ade.a', 'adw.a']:
+        if not radar in ['mcm.a', 'ksr.a', 'kod.c', 'kod.d', 'sps.a', 'mcm.a', 'mcm.b', 'ade.a', 'adw.a']:
             print 'only UAF radars with data on chiniak are currently supported, skipping ' + radar
+            # TODO: grab data of big dipper
             continue
 
         while starttime < endtime:
@@ -541,16 +550,16 @@ def main():
     # so, two workers on kodiak-devel
     # i7 with a gtx970 could probably handle six
     print 'starting fitlomb worker pool'
-    fitlomb_pool = Pool(processes = POOL_SIZE)
+    generate_fitlomb(records[0])
+    pdb.set_trace()
+    fitlomb_pool = Pool(processes = args.poolsize)
     
     for record in records:
         fitlomb_pool.apply_async(func=generate_fitlomb, args=(record,))
 
     fitlomb_pool.close()
-    print 'closing fitlomb worker pool'
     fitlomb_pool.join()
     print 'fitlomb workers finished...'
-    print 'that took: ' + str(time.time()-start) + ' seconds' 
 
 if __name__ == '__main__':
     main()

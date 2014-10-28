@@ -28,10 +28,11 @@ mod = pycuda.compiler.SourceModule("""
 #define PI (3.141592)
 
 // lags is mask of good lags 
-__global__ void calc_bayes(float *samples, int32_t *lags, float *alphas, float *lag_times, float *ce_matrix, float *se_matrix, float *R_f, float *I_f, double *hbar2, double *P_f, float env_model, int32_t nsamples, int32_t nalphas, int32_t *n_good_lags_v)
+__global__ void calc_bayes(float *samples, int32_t *lags, float *alphas, float *lag_times, float *ce_matrix, float *se_matrix, double *P_f, float env_model, int32_t nsamples, int32_t nalphas, int32_t *n_good_lags_v)
 {
     int32_t t, i, sample_offset, samplebase;
     double dbar2 = 0;
+    double hbar2 = 0;
     int32_t n_good_samples = 0;
     float alpha;
 
@@ -92,23 +93,23 @@ __global__ void calc_bayes(float *samples, int32_t *lags, float *alphas, float *
     // CS[alpha][time][freq]
     for(i =  0; i < nalphas; i++) {
         int32_t RI_offset = (blockIdx.x * blockDim.x * nalphas) + (i * blockDim.x) + threadIdx.x;
-        R_f[RI_offset] = 0;
-        I_f[RI_offset] = 0;
+        float r_f = 0;
+        float i_f = 0;
 
         
         for(t = 0; t < nsamples; t++) {
             int32_t CS_offset = (i * blockDim.x * nsamples) + (t * blockDim.x) + threadIdx.x;
             sample_offset = 2*t;
 
-            R_f[RI_offset] +=   s_samples[sample_offset + REAL] * ce_matrix[CS_offset] + \
-                                s_samples[sample_offset + IMAG] * se_matrix[CS_offset];
-            I_f[RI_offset] +=   s_samples[sample_offset + REAL] * se_matrix[CS_offset] - \
-                                s_samples[sample_offset + IMAG] * ce_matrix[CS_offset];
+            r_f += s_samples[sample_offset + REAL] * ce_matrix[CS_offset] + \
+                   s_samples[sample_offset + IMAG] * se_matrix[CS_offset];
+            i_f += s_samples[sample_offset + REAL] * se_matrix[CS_offset] - \
+                   s_samples[sample_offset + IMAG] * ce_matrix[CS_offset];
         }
 
-        hbar2[RI_offset] = ((pow(R_f[RI_offset],2) / s_cs_f[i]) + \
-                            (pow(I_f[RI_offset],2) / s_cs_f[i])) / 2;
-        P_f[RI_offset] = log10(n_good_samples * 2 * dbar2 - hbar2[RI_offset]) * (1 - ((double) n_good_samples)) - log10(s_cs_f[i]);
+        hbar2 = ((pow(r_f, 2) / s_cs_f[i]) + (pow(i_f, 2) / s_cs_f[i])) / 2;
+        P_f[RI_offset] = log10(n_good_samples * 2 * dbar2 - hbar2) * (1 - ((double) n_good_samples)) - log10(s_cs_f[i]);
+        //I_f[RI_offset] = i_f;
     }
 
     if(threadIdx.x == 0) {
@@ -156,7 +157,7 @@ __global__ void find_peaks(double *P_f, int32_t *peaks, int32_t nalphas)
 }
 
 // thread for each pulse, find fwhm and calculate ampltitude
-__global__ void process_peaks(float *samples, float *lag_times, float *freqs, float *alfs, double *P_f, float *R_f, float *I_f, float *snr, int32_t *lagmask, int32_t *n_good_lags, int32_t *peaks, int32_t nfreqs, int32_t nalphas, int32_t nlags, int32_t *alphafwhm, int32_t *freqfwhm, double *amplitudes) 
+__global__ void process_peaks(float *samples, float *ce_matrix, float *se_matrix, float *lag_times, float *freqs, float *alfs, double *P_f, float *snr, int32_t *lagmask, int32_t *n_good_lags, int32_t *peaks, int32_t nfreqs, int32_t nalphas, int32_t nlags, int32_t *alphafwhm, int32_t *freqfwhm, double *amplitudes) 
 {
     int32_t peakidx = peaks[threadIdx.x];
     int32_t i;
@@ -211,16 +212,31 @@ __global__ void process_peaks(float *samples, float *lag_times, float *freqs, fl
     }
     __syncthreads();  // sync threads, they probably diverged during fwhm calculations
 
-    uint32_t alfidx = ((peakidx - (peakidx % nfreqs)) % (nfreqs * nalphas)) / nfreqs;
-    peakfreq = freqs[peakidx % nfreqs];
+    int32_t alfidx = ((peakidx - (peakidx % nfreqs)) % (nfreqs * nalphas)) / nfreqs;
+    int32_t freqidx = peakidx % nfreqs;
+    peakfreq = freqs[freqidx];
     peakalf = alfs[alfidx];
 
     // calculate cs_f at peak, then calculate amplitude
     for(i = 0; i < nlags; i++) {
         cs_f += pow(exp(-peakalf * s_times[i]), 2) * (lagmask[threadIdx.x * nlags + i] != 0);
     }
+    
+    // recalculate r_f and i_f at peak (not caching eliminates many global memory accesses and reduces memory usage by 33%)
+    float r_f = 0;
+    float i_f = 0;
+    
+    for(i = 0; i < nlags; i++) {
+        int32_t CS_offset = (alfidx * nfreqs * nlags) + (i * nfreqs) + freqidx;
+        int32_t sample_offset = threadIdx.x * nlags * 2 + 2*i;
 
-    peakamp = (R_f[peakidx] + I_f[peakidx]) / cs_f;
+        r_f += samples[sample_offset + REAL] * ce_matrix[CS_offset] + \
+               samples[sample_offset + IMAG] * se_matrix[CS_offset];
+        i_f += samples[sample_offset + REAL] * se_matrix[CS_offset] - \
+               samples[sample_offset + IMAG] * ce_matrix[CS_offset];
+    }
+
+    peakamp = (r_f + i_f) / cs_f;
 
     alphafwhm[threadIdx.x] = afwhm;
     freqfwhm[threadIdx.x] = ffwhm;
@@ -299,11 +315,8 @@ class BayesGPU:
          
         # create dummy matricies to allocate on GPU
         lagmask = np.int32(np.zeros([self.npulses, self.nlags]))
-        R_f = np.float32(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
-        I_f = np.float32(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
-        hbar2 = np.float64(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
         samples = np.float32(np.zeros([self.npulses, 2 * self.nlags]))
-        self.P_f = np.float64(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
+        P_f = np.float64(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
 
         self.peaks = np.int32(np.zeros(self.npulses))
         self.alf_fwhm = np.int32(np.zeros(self.npulses))
@@ -318,10 +331,7 @@ class BayesGPU:
         self.lagmask_gpu = cuda.mem_alloc(lagmask.nbytes)
         self.ce_gpu = cuda.mem_alloc(ce_matrix_g.nbytes)
         self.se_gpu = cuda.mem_alloc(se_matrix_g.nbytes)
-        self.R_f_gpu = cuda.mem_alloc(R_f.nbytes)
-        self.I_f_gpu = cuda.mem_alloc(I_f.nbytes)
-        self.hbar2_gpu  = cuda.mem_alloc(hbar2.nbytes)
-        self.P_f_gpu = cuda.mem_alloc(self.P_f.nbytes)
+        self.P_f_gpu = cuda.mem_alloc(P_f.nbytes) # 450 mb
         self.peaks_gpu = cuda.mem_alloc(self.peaks.nbytes)
         self.alf_fwhm_gpu = cuda.mem_alloc(self.alf_fwhm.nbytes)
         self.freq_fwhm_gpu = cuda.mem_alloc(self.freq_fwhm.nbytes)
@@ -331,6 +341,8 @@ class BayesGPU:
         self.lag_times_gpu = cuda.mem_alloc(self.lags.nbytes)
         self.freqs_gpu = cuda.mem_alloc(self.freqs.nbytes)
         self.alfs_gpu = cuda.mem_alloc(self.alfs.nbytes)
+    
+        # compute total GPU memory requirements..
 
         # copy ce/se/cs matricies over to GPU
         cuda.memcpy_htod(self.ce_gpu, ce_matrix_g)
@@ -353,9 +365,9 @@ class BayesGPU:
         cuda.memcpy_htod(self.lagmask_gpu, self.lagmask)
     
         # about 90% of the time is spent on calc_bayes
-        self.calc_bayes(self.samples_gpu, self.lagmask_gpu, self.alfs_gpu, self.lag_times_gpu, self.ce_gpu, self.se_gpu, self.R_f_gpu, self.I_f_gpu, self.hbar2_gpu, self.P_f_gpu, self.env_model, self.nlags, self.nalfs, self.n_good_lags_gpu, block = (int(self.nfreqs),1,1), grid = (int(self.npulses),1,1))
+        self.calc_bayes(self.samples_gpu, self.lagmask_gpu, self.alfs_gpu, self.lag_times_gpu, self.ce_gpu, self.se_gpu, self.P_f_gpu, self.env_model, self.nlags, self.nalfs, self.n_good_lags_gpu, block = (int(self.nfreqs),1,1), grid = (int(self.npulses),1,1))
         self.find_peaks(self.P_f_gpu, self.peaks_gpu, self.nalfs, block = (int(self.nfreqs),1,1), grid = (int(self.npulses),1))
-        self.process_peaks(self.samples_gpu, self.lag_times_gpu, self.freqs_gpu, self.alfs_gpu, self.P_f_gpu, self.R_f_gpu, self.I_f_gpu, self.snr_gpu, self.lagmask_gpu, self.n_good_lags_gpu, self.peaks_gpu, self.nfreqs, self.nalfs, self.nlags, self.alf_fwhm_gpu, self.freq_fwhm_gpu, self.amplitudes_gpu, block = (int(self.npulses),1,1))
+        self.process_peaks(self.samples_gpu, self.ce_gpu, self.se_gpu, self.lag_times_gpu, self.freqs_gpu, self.alfs_gpu, self.P_f_gpu, self.snr_gpu, self.lagmask_gpu, self.n_good_lags_gpu, self.peaks_gpu, self.nfreqs, self.nalfs, self.nlags, self.alf_fwhm_gpu, self.freq_fwhm_gpu, self.amplitudes_gpu, block = (int(self.npulses),1,1))
 
     
     def process_bayesfit(self, tfreq, noise):
@@ -432,8 +444,8 @@ def main():
         noise = 1e-6#0.001
         env_model = LAMBDA_FIT 
         lmask = [0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0]
-        lagmask = np.tile(np.ones(len(lags)), maxpulses)
         lagmask = np.tile(lmask, maxpulses)
+        lagmask = np.tile(np.ones(len(lags)), maxpulses)
         
         F = f[0]+noise*np.random.randn()
         U = alf[0]+noise*np.random.randn()
@@ -493,7 +505,7 @@ def main():
     print 'actual amplitude: ' + str(amp[0])
 
     #samples_cpu = np.array(samples[0:int(len(samples)/maxpulses):2]) + 1j * np.array(samples[1:int(len(samples)/maxpulses):2])
-    #R_f_cpu, I_f_cpu, hbar2_cpu, P_f_cpu = calculate_bayes(samples_cpu, lags, freqs, alfs, env_model)
+    #R_f_cpu, I_f_cpu, P_f_cpu = calculate_bayes(samples_cpu, lags, freqs, alfs, env_model)
     
     fit = gpu.amplitudes[rgate] * np.exp(1j * 2 * np.pi * gpu.vfreq[rgate] * lags) * np.exp(-gpu.walf[rgate] * lags)
     expected = amp[0] * np.exp(1j * 2 * np.pi * f[0] * lags) * np.exp(-alf[0] * lags)
@@ -508,7 +520,7 @@ def main():
     plt.show()
     
 
-    cuda.memcpy_dtoh(gpu.P_f, gpu.P_f_gpu)
+    #cuda.memcpy_dtoh(gpu.P_f, gpu.P_f_gpu)
     ''' 
     if max(P_f_cpu.flatten() - gpu.P_f.flatten()[0:(len(freqs) * len(alfs))]) < 3e-6:
         print 'P_f on GPU and CPU match'
@@ -516,8 +528,8 @@ def main():
         print 'P_f calculation error! GPU and CPU matricies do not match'
     '''
 
-    plt.imshow(gpu.P_f[rgate])
-    plt.show()
+    #plt.imshow(gpu.P_f[rgate])
+    #plt.show()
     # peak about 18 260
     # freq 260
     # alf 18
