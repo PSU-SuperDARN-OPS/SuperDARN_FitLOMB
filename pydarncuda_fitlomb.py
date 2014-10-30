@@ -5,7 +5,6 @@
 # TODO: move raw data to ARSC, process on their machines
 # TODO: look at residual spread of fitacf and fitlomb to samples
 # TODO: look at variance of residual, compare with fitacf
-# TODO: fix nlag, qflg, and snr
 import argparse
 import pydarn.sdio as sdio
 import datetime, calendar, time
@@ -15,10 +14,10 @@ import lagstate
 import pdb
 import os
 from multiprocessing import Pool, Manager 
-
+from bigdipper import cache_data, mount_raid0
 
 FITLOMB_REVISION_MAJOR = 2
-FITLOMB_REVISION_MINOR = 3
+FITLOMB_REVISION_MINOR = 4
 ORIGIN_CODE = 'pydarncuda_fitlomb.py'
 DATA_DIR = '/home/radar/fitlomb/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
@@ -28,13 +27,15 @@ Q_OFFSET = 1
 
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 2000 # m/s, max velocity (doppler shift) to include in lomb
-MAX_W = 1000 # m/s, max spectral width to include in lomb 
+MAX_W = 1200 # m/s, max spectral width to include in lomb 
 NFREQS = 512
 NALFS = 512 
 MAXPULSES = 300
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
-SNR_THRESH = .25 # minimum ratio of power in fitted signal and residual for a qualtiy fit
+SNR_THRESH = .10 # minimum ratio of power in fitted signal and residual for a qualtiy fit
+VERR_THRESH = 100
+WERR_THRESH = 100
 C = 3e8
 MAX_TFREQ = 16e6
 POOL_SIZE = 2 # maximum pool size for multiprocessing of fits..
@@ -108,14 +109,14 @@ class CULombFit:
         self.w_thresh = 90. # blanchard, 2009
         
         # threshold on power (snr), spectral width std error m/s, and velocity std error m/s for quality flag
-        self.qwle_thresh = 100
-        self.qvle_thresh = 100
+        self.qwle_thresh = WERR_THRESH
+        self.qvle_thresh = VERR_THRESH 
         self.qpwr_thresh = .5
         self.snr_thresh = SNR_THRESH 
         # thresholds on velocity and spectral width for ionospheric scatter flag (m/s)
         self.wimin_thresh = 100
-        self.wimax_thresh = MAX_W - 100
-        self.vimax_thresh = MAX_V - 100
+        self.wimax_thresh = MAX_W - 50
+        self.vimax_thresh = MAX_V - 50
         self.vimin_thresh = 100
         
         self.maxfreqs = 1
@@ -153,7 +154,7 @@ class CULombFit:
         self.iflg       = np.zeros([self.nrang, self.maxfreqs])
         self.qflg       = np.zeros([self.nrang, self.maxfreqs])
 
-        self.nlag       = np.zeros([self.nrang])
+        self.nlag       = np.zeros([self.nrang, self.maxfreqs])
 
         self.CalcLags()
         self.CalcBadlags() # TODO: about 1/3 of execution time spent here 
@@ -386,12 +387,12 @@ class CULombFit:
                     
                     lagpowers = abs(samples) ** 2
 
-                    bad_lags[rgate] += (lagpowers > (lagpowers[0] * 2.0))# add interference lags
+                    bad_lags[rgate] += (lagpowers > (lagpowers[0] * 10.0))# add interference lags
                 else:
                     # if lag zero is bad, we can't filter out lags greater than lag zero because we don't know what it is..
                     pass 
-
-                self.nlag[rgate] = len(bad_lags[rgate]) - sum(bad_lags[rgate])
+                
+                self.nlag[rgate,0] = len(bad_lags[rgate]) - sum(bad_lags[rgate])
 
                 if not uselagzero:
                     bad_lags[rgate][0] = True
@@ -501,12 +502,12 @@ def generate_fitlomb(record):
 def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
-    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.01.0000", default = "2014.03.01.0000")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.08.1200", default = "2014.03.10.0000")
+    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.01.0000", default = "2014.04.01.0000")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.08.1200", default = "2014.04.02.0000")
     parser.add_argument("--enable_sigmafit", help="enable fitting sigma (p_s/v_s) parameters. this will double runtime and GPU VRAM usage", action='store_true', default=False) 
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
     parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default=POOL_SIZE) 
-    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['kod.d', 'kod.c', 'adw.a', 'ade.a', 'ksr.a', 'sps.a', 'mcm.a']) 
+    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['pgr'])
     parser.add_argument("--datadir", help="base directory for .fitlomb files (defaults to /home/radar/fitlomb/)", default='/home/radar/fitlomb/') 
 
     # TODO: add channel/beam?
@@ -515,6 +516,9 @@ def main():
     # TODO: these probably shouldn't be global variables..
     CALC_SIGMA = args.enable_sigmafit
     DATA_DIR = args.datadir
+    
+    # mount raid0 via sshfs on chiniak... (to get write access)
+    mount_raid0()
 
     # parse date string and convert to datetime object
     starttime = datetime.datetime(*time.strptime(args.starttime, "%Y.%m.%d.%H%M")[:7])
@@ -534,24 +538,22 @@ def main():
     records = []
 
     for radar in args.radars:
-        if not radar in ['mcm.a', 'ksr.a', 'kod.c', 'kod.d', 'sps.a', 'mcm.a', 'mcm.b', 'ade.a', 'adw.a']:
-            print 'only UAF radars with data on chiniak are currently supported, skipping ' + radar
-            # TODO: grab data of big dipper
-            continue
+        print 'adding ' + radar + ' jobs to pool'
+        if not radar in ['ksr.a', 'ade.a', 'adw.a', 'sps.a',  'kod.c', 'kod.d', 'mcm.a']:
+            print radar + ' is not a UAF radar and may not have data on raid0, syncing with bigdipper...'
+            cache_data(radar, starttime, endtime)
 
-        while starttime < endtime:
-            stime = starttime
+        stime = starttime
+        while stime < endtime:
             etime = min(stime + datetime.timedelta(hours = args.recordlen), endtime)
             records.append((stime, etime, radar, lock))
-            starttime = etime
+            stime = etime
     
     # run pool of records in parallel
-    # each worker takes 1 CPU and about 512 MB of GPU memory for 512x512 frequency/alpha resolution
+    # each worker takes 1 CPU and about 200 MB of GPU memory for 512x512 frequency/alpha resolution
     # so, two workers on kodiak-devel
-    # i7 with a gtx970 could probably handle six
+    # i7 with a gtx970 could handle eight
     print 'starting fitlomb worker pool'
-    generate_fitlomb(records[0])
-    pdb.set_trace()
     fitlomb_pool = Pool(processes = args.poolsize)
     
     for record in records:

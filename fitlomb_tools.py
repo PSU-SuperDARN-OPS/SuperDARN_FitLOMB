@@ -26,7 +26,7 @@ WHITE = 3e3
 EPOCH = datetime.datetime(1970,1,1)
 ALLBEAMS = [str(b) for b in range(BEAMS)]
 MINRANGE = 75 
-MAXRANGE = 3375
+MAXRANGE = 5000 
 TIMEINT = 20
 BEAMS = [3]#[6, 7,8,9,10]#ALLBEAMS# [9]
 cdict3 = {'red':  ((0.0, 0.0, 0.0),
@@ -182,7 +182,8 @@ def PlotRTI(times, ranges, z, cmap, lim):
             ztemp = (z[j][:len(r)]).copy()
 
             for k in range(len(maxranges)):
-                z[j][k] = ztemp[k/repfactor]
+                if k/repfactor < len(ztemp):
+                    z[j][k] = ztemp[k/repfactor]
 
         # so, number of range gates varies from 75 to 225
         # need to fit into array of size 255...
@@ -324,6 +325,7 @@ def PlotTime(radar, starttime, endtime, directory, beams):
 
     plot_vector(lombfit, beams, 'v_e' , '', starttime, endtime, vmax = 300, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
     plot_vector(lombfit, beams, 'w_l_e' , '', starttime, endtime, vmax = 400, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
+    plot_vector(lombfit, beams, 'nlag' , '', starttime, endtime, vmax = 25, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
     #plot_vector(lombfit, beams, 'r2_phase_l' , '', starttime, endtime, vmax = 1, vmin = -1, cmap = plt.cm.get_cmap("SD_V"), image=True)
     lombfit.close()
 
@@ -332,18 +334,18 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
 
-    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.03.01.00")
-    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.03.29.00")
+    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.04.01.00")
+    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.05.01.00")
     parser.add_argument("--maxplotlen", help="maximum length of a rti plot, in hours", default = 24)
     parser.add_argument("--radar", help="radar to create data from", default='mcm.a')
     parser.add_argument("--beam", help="beam to plot", default=9)
-
+    parser.add_argument("--plotdir", help="directory to place plots (defaults to ./plots/)", default=PLOTDIR)
     args = parser.parse_args()
 
+    PLOTDIR = args.plotdir 
     # parse date string and convert to datetime object
     starttime = datetime.datetime(*time.strptime(args.starttime, "%Y.%m.%d.%H")[:6])
     endtime = datetime.datetime(*time.strptime(args.endtime, "%Y.%m.%d.%H")[:6])
-    
     maxplotlen = datetime.timedelta(hours = args.maxplotlen)
 
     plot_times = {}
@@ -364,4 +366,7 @@ if __name__ == '__main__':
             for beam in [args.beam]:
                 print 'plotting '  + str(stime)
                 RADAR = radar
-                PlotTime(RADAR, stime, plot_times[stime], DATADIR, [beam]) 
+                try:
+                    PlotTime(RADAR, stime, plot_times[stime], DATADIR, [beam]) 
+                except:
+                    print 'error plotting ' + str(stime) + '... skipping'
