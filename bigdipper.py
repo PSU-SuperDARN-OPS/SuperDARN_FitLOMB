@@ -1,5 +1,5 @@
 # jon klein jtklein@alaska.edu
-# python functions to copy rawacf data from big dipper to chiniak
+# python functions to copy around rawacf and fitlomb data on big dipper and chiniak
 
 import subprocess
 import time
@@ -17,7 +17,9 @@ ARCHIVE_COMP = 'bigdipper.arsc.edu'
 ARCHIVE_USER = 'jtklein'
 RSYNC_PATH = '--rsync-path=/usr/local/bin/rsync'
 STAGE_CMD = 'bash ~/sd_archive_tools/stage_rawacfs.bash'
- 
+LOCAL_FITLOMB_DIR = '/home/radar/fitlomb/'
+REMOTE_FITLOMB_DIR = '/sam-qfs/SUPERDARN/fitlomb/'
+
 # runs a command over ssh, returns response
 def remote_command(user, radar, command, timeout = SSHTIMEOUT):
         try:
@@ -43,6 +45,21 @@ def remote_command(user, radar, command, timeout = SSHTIMEOUT):
         signal.alarm(0)
         return out
 
+# move local fitlomb files to bigdipper
+def shelve_data(radar, startdate, enddate, computer, local_dir = LOCAL_FITLOMB_DIR, remote_dir = REMOTE_FITLOMB_DIR):
+    
+    # for each day of data..
+    stagedate = startdate
+    while stagedate <= enddate:
+        datefolders = stagedate.strftime("/%Y/%m.%d/")
+        rdir = remote_dir + datefolders
+        ldir = local_dir + datefolders
+        
+
+        stagedate += relativedelta(days = 1)
+
+        cmdlist = ['rsync', '-avz', '-e', 'ssh', '--remove-source-files', rdir, computer + ':' + ldir]
+        print ' '.join(cmdlist)
 
 def cache_data(radar, startdate, enddate):
         print 'caching data for ' + radar + ' from bigdipper to /raid0 via chiniak.. this may take a few hours'

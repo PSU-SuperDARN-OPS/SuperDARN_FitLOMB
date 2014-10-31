@@ -157,6 +157,113 @@ __global__ void find_peaks(double *P_f, int32_t *peaks, int32_t nalphas)
 }
 
 // thread for each pulse, find fwhm and calculate ampltitude
+__global__ void process_peaks_mom(float *samples, float *ce_matrix, float *se_matrix, float *lag_times, float *freqs, float *alfs, double *P_f, float *snr, int32_t *lagmask, int32_t *n_good_lags, int32_t *peaks, int32_t nfreqs, int32_t nalphas, int32_t nlags, int32_t *alphafwhm, int32_t *freqfwhm, double *amplitudes) 
+{
+    int32_t peakidx;
+    int32_t i;
+    float fitpwr = 0;
+    float rempwr = 0;
+    float cs_f = 0;
+    double apex = P_f[peakidx];
+
+    float peakamp;
+    float peakfreq;
+    float peakalf;
+
+    float fitted_signal[MAX_SAMPLES];
+    float factor = (apex - .30103); // -.30103 is log10(.5)
+     
+    int32_t ffwhm = 1;
+    int32_t afwhm = 1;
+     
+    int32_t pulse_lowerbound = peakidx - (peakidx % (nfreqs * nalphas));
+    int32_t pulse_upperbound = pulse_lowerbound + (nfreqs * nalphas);
+    
+    __shared__ float s_times[MAX_SAMPLES]; 
+
+    // parallel cache lag times
+    for(i = 0; i <= nlags / blockDim.x; i++) {
+        int32_t idx = i * blockDim.x + threadIdx.x;
+        if(idx < nlags) {
+            s_times[idx] = lag_times[idx];
+        }
+    }
+    __syncthreads();  
+
+    // find alpha fwhm 
+    for(i = peakidx; i < pulse_upperbound && P_f[i] > factor; i+=nfreqs) {
+        afwhm++; 
+    } 
+    __syncthreads();  
+
+    for(i = peakidx; i >= pulse_lowerbound && P_f[i] > factor; i-=nfreqs) {
+        afwhm++; 
+    }
+    __syncthreads();  
+
+    // find freq fwhm
+    // don't care about fixing edge cases with peak on max or min freq, they are thrown as non-quality fits anyways
+    for(i = peakidx; i % nfreqs != 0 && P_f[i] > factor; i++) {
+        ffwhm++; 
+    }
+    __syncthreads();  
+
+    for(i = peakidx; i % nfreqs != 0 && P_f[i] > factor; i--) {
+        ffwhm++; 
+    }
+    __syncthreads();  // sync threads, they probably diverged during fwhm calculations
+
+    int32_t alfidx = ((peakidx - (peakidx % nfreqs)) % (nfreqs * nalphas)) / nfreqs;
+    int32_t freqidx = peakidx % nfreqs;
+    peakfreq = freqs[freqidx];
+    peakalf = alfs[alfidx];
+
+    // calculate cs_f at peak, then calculate amplitude
+    for(i = 0; i < nlags; i++) {
+        cs_f += pow(exp(-peakalf * s_times[i]), 2) * (lagmask[threadIdx.x * nlags + i] != 0);
+    }
+    
+    // recalculate r_f and i_f at peak (not caching eliminates many global memory accesses and reduces memory usage by 33%)
+    float r_f = 0;
+    float i_f = 0;
+    
+    for(i = 0; i < nlags; i++) {
+        int32_t CS_offset = (alfidx * nfreqs * nlags) + (i * nfreqs) + freqidx;
+        int32_t sample_offset = threadIdx.x * nlags * 2 + 2*i;
+
+        r_f += samples[sample_offset + REAL] * ce_matrix[CS_offset] + \
+               samples[sample_offset + IMAG] * se_matrix[CS_offset];
+        i_f += samples[sample_offset + REAL] * se_matrix[CS_offset] - \
+               samples[sample_offset + IMAG] * ce_matrix[CS_offset];
+    }
+
+    peakamp = (r_f + i_f) / cs_f;
+
+    alphafwhm[threadIdx.x] = afwhm;
+    freqfwhm[threadIdx.x] = ffwhm;
+    amplitudes[threadIdx.x] = peakamp;
+    
+    // on each peak-thread, calculate fitted signal, fitted signal power, and remaining power
+    for (i = 0; i < nlags; i++) {
+        int32_t samplebase = threadIdx.x * nlags * 2; 
+
+        float envelope = peakamp * exp(-peakalf * s_times[i]); 
+        // TODO: add in environment model... exp(-peakalf ** 2?)
+        float angle = 2 * PI * peakfreq * s_times[i];
+        fitted_signal[2*i] = envelope * cos(angle);
+        fitted_signal[2*i+1] = envelope * sin(angle);
+        
+        samples[samplebase + 2*i] -= fitted_signal[2*i];
+        samples[samplebase + 2*i+1] -= fitted_signal[2*i+1];
+        
+        rempwr += sqrt(pow(samples[samplebase + 2*i],2) + pow(samples[samplebase + 2*i+1],2)) * lagmask[threadIdx.x * nlags + i];
+        fitpwr += sqrt(pow(fitted_signal[2*i],2) + pow(fitted_signal[2*i+1],2)) * lagmask[threadIdx.x * nlags + i];
+    }
+    
+    snr[threadIdx.x] = fitpwr / rempwr;
+}
+
+// thread for each pulse, find fwhm and calculate ampltitude
 __global__ void process_peaks(float *samples, float *ce_matrix, float *se_matrix, float *lag_times, float *freqs, float *alfs, double *P_f, float *snr, int32_t *lagmask, int32_t *n_good_lags, int32_t *peaks, int32_t nfreqs, int32_t nalphas, int32_t nlags, int32_t *alphafwhm, int32_t *freqfwhm, double *amplitudes) 
 {
     int32_t peakidx = peaks[threadIdx.x];
@@ -316,8 +423,8 @@ class BayesGPU:
         # create dummy matricies to allocate on GPU
         lagmask = np.int32(np.zeros([self.npulses, self.nlags]))
         samples = np.float32(np.zeros([self.npulses, 2 * self.nlags]))
-        P_f = np.float64(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
 
+        self.P_f = np.float64(np.zeros([self.npulses, self.nalfs, self.nfreqs]))
         self.peaks = np.int32(np.zeros(self.npulses))
         self.alf_fwhm = np.int32(np.zeros(self.npulses))
         self.freq_fwhm = np.int32(np.zeros(self.npulses))
@@ -331,7 +438,7 @@ class BayesGPU:
         self.lagmask_gpu = cuda.mem_alloc(lagmask.nbytes)
         self.ce_gpu = cuda.mem_alloc(ce_matrix_g.nbytes)
         self.se_gpu = cuda.mem_alloc(se_matrix_g.nbytes)
-        self.P_f_gpu = cuda.mem_alloc(P_f.nbytes) # 450 mb
+        self.P_f_gpu = cuda.mem_alloc(self.P_f.nbytes) # 450 mb
         self.peaks_gpu = cuda.mem_alloc(self.peaks.nbytes)
         self.alf_fwhm_gpu = cuda.mem_alloc(self.alf_fwhm.nbytes)
         self.freq_fwhm_gpu = cuda.mem_alloc(self.freq_fwhm.nbytes)
@@ -426,7 +533,7 @@ class BayesGPU:
 # run kernprof -l cuda_bayes.py
 # then python -m line_profiler cuda_bayes.py.lprof to view results
 def main():
-    SYNTHETIC = True 
+    SYNTHETIC = False 
 
     f = [2.9]
     amp = [27000.]
@@ -472,6 +579,8 @@ def main():
         lags = param['lags']
         freqs = param['freqs']
         alfs = param['alfs']
+        alfs = alfs[::8]
+        freqs = freqs[::8]
         maxpulses = param['npulses']
         env_model = param['env_model']
         samples = param['samples']
@@ -494,11 +603,12 @@ def main():
     if not SYNTHETIC: 
         i_samp = samples[rgate][0::2]
         q_samp = samples[rgate][1::2]
-        plt.plot(gpu.lags[np.nonzero(i_samp)], i_samp[np.nonzero(i_samp)])
-        plt.plot(gpu.lags[np.nonzero(q_samp)], q_samp[np.nonzero(q_samp)])
+        #plt.plot(gpu.lags[np.nonzero(i_samp)], i_samp[np.nonzero(i_samp)])
+        #plt.plot(gpu.lags[np.nonzero(q_samp)], q_samp[np.nonzero(q_samp)])
     else:
-        plt.plot(gpu.lags, np.real(signal))
-        plt.plot(gpu.lags, np.imag(signal))
+        pass
+        #plt.plot(gpu.lags, np.real(signal))
+        #plt.plot(gpu.lags, np.imag(signal))
 
     print 'actual decay: ' + str(alf[0])
     print 'actual freq: ' + str(f[0])
@@ -509,18 +619,19 @@ def main():
     
     fit = gpu.amplitudes[rgate] * np.exp(1j * 2 * np.pi * gpu.vfreq[rgate] * lags) * np.exp(-gpu.walf[rgate] * lags)
     expected = amp[0] * np.exp(1j * 2 * np.pi * f[0] * lags) * np.exp(-alf[0] * lags)
-    plt.plot(gpu.lags, np.real(fit))
-    plt.plot(gpu.lags, np.imag(fit))
+    #plt.plot(gpu.lags, np.real(fit))
+    #plt.plot(gpu.lags, np.imag(fit))
 
     #plt.plot(lags, np.real(expected))
     #plt.plot(lags, np.imag(expected))
     
     #plt.plot(lags, amp[0] * ce_matrix[0][:,7] + .05)
-    plt.legend(['samp_i', 'samp_q', 'fit_i', 'fit_q', 'expected_i', 'expected_q', 'ce_matrix'])
-    plt.show()
+    #plt.legend(['samp_i', 'samp_q', 'fit_i', 'fit_q', 'expected_i', 'expected_q', 'ce_matrix'])
+    #plt.show()
     
 
-    #cuda.memcpy_dtoh(gpu.P_f, gpu.P_f_gpu)
+
+    cuda.memcpy_dtoh(gpu.P_f, gpu.P_f_gpu)
     ''' 
     if max(P_f_cpu.flatten() - gpu.P_f.flatten()[0:(len(freqs) * len(alfs))]) < 3e-6:
         print 'P_f on GPU and CPU match'
@@ -528,12 +639,17 @@ def main():
         print 'P_f calculation error! GPU and CPU matricies do not match'
     '''
 
-    #plt.imshow(gpu.P_f[rgate])
-    #plt.show()
+    pdb.set_trace()
+    for gate in range(75):
+        plt.imshow(gpu.P_f[gate])
+        print 'calculated amplitude: ' + str(gpu.amplitudes[gate]) 
+        print 'calculated freq: ' + str(gpu.vfreq[gate]) 
+        print 'calculated decay: ' + str(gpu.walf[gate]) 
+        plt.show()
+     
     # peak about 18 260
     # freq 260
     # alf 18
-    pdb.set_trace()
 
 if __name__ == '__main__':
     main()

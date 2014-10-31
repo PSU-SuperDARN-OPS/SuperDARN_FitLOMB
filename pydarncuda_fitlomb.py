@@ -502,12 +502,12 @@ def generate_fitlomb(record):
 def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
-    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.01.0000", default = "2014.04.01.0000")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.08.1200", default = "2014.04.02.0000")
+    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.03.01.2000")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.03.10.0000")
     parser.add_argument("--enable_sigmafit", help="enable fitting sigma (p_s/v_s) parameters. this will double runtime and GPU VRAM usage", action='store_true', default=False) 
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
     parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default=POOL_SIZE) 
-    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['pgr'])
+    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['ksr.a', 'kod.d'])
     parser.add_argument("--datadir", help="base directory for .fitlomb files (defaults to /home/radar/fitlomb/)", default='/home/radar/fitlomb/') 
 
     # TODO: add channel/beam?
