@@ -1,7 +1,8 @@
 import numpy as np
 # TODO: handle case with lag 0 - if lag 0 is bad, use alternate lag zero (if it exists..)
 # (regenerate behavior for rawacf...)
-def good_lags(prm,pwr0):
+#@profile
+def good_lags(prm):
 
 # Transmit samples
   ptimes_usec=[]
@@ -39,24 +40,25 @@ def good_lags(prm,pwr0):
   for rbin in xrange(prm.nrang):
     bad_pulse=[]
     for pulse in xrange(prm.mppul):
-      bad_pulse.append(0);
+      bad_pulse.append(0)
     for ck_pulse in xrange(prm.mppul):
       for pulse in xrange(prm.mppul):
-        ck_range = range_overlap[ck_pulse][pulse] + rbin;
+        ck_range = range_overlap[ck_pulse][pulse] + rbin
         if ((pulse != ck_pulse) and (0 <= ck_range) and (ck_range < prm.nrang)):
-          pwr_ratio = 1;  #pwr_ratio = (long) (nave * MIN_PWR_RATIO);
-          min_pwr =  pwr_ratio * pwr0[rbin];
-          if(min_pwr < pwr0[ck_range]):
-            bad_pulse[ck_pulse]==1  
+          #pwr_ratio = 1  #pwr_ratio = (long) (nave * MIN_PWR_RATIO)
+          #min_pwr =  pwr_ratio * pwr0[rbin]
+          #if(min_pwr < pwr0[ck_range]):
+          #  import pdb
+          #  pdb.set_trace()
+          bad_pulse[ck_pulse]==1  
   # mark the bad lags 
     for pulse in xrange(prm.mppul):
       if (bad_pulse[pulse] == 1): 
         for lag in xrange(prm.mplgs):
           for i in xrange(2):
             if (prm.ltab[lag][i] == prm.ptab[pulse]):
-              good_lags[rbin][lag]=False;  
-              pass
+              good_lags[rbin][lag]=False
   return np.array(good_lags,dtype="bool")
  
-def bad_lags(prm,pwr0):
-  return ~good_lags(prm,pwr0)
+def bad_lags(prm):
+  return ~good_lags(prm)

@@ -38,14 +38,14 @@ NALFS = 128
 MAXPULSES = 300
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
-SNR_THRESH = .25 # minimum ratio of power in fitted signal and residual for a qualtiy fit
+SNR_THRESH = .5 # minimum ratio of power in fitted signal and residual for a qualtiy fit
 VERR_THRESH = 50 
 WERR_THRESH = 50 
 C = 3e8
 MAX_TFREQ = 16e6
 POOL_SIZE = 8 # maximum pool size for multiprocessing of fits..
 CALC_SIGMA = False 
-DEBUG = False
+DEBUG = False 
 
 GROUP_ATTR_TYPES = {\
         'txpow':np.int16,\
@@ -87,6 +87,8 @@ GROUP_ATTR_TYPES = {\
         'ltab':np.int16,\
         'ifmode':np.int16,\
         'xcf':np.int8}
+
+             
 
 class CULombFit:
     #@profile
@@ -161,9 +163,7 @@ class CULombFit:
         self.nlag       = np.zeros([self.nrang, self.maxfreqs])
 
         self.CalcLags()
-        self.CalcBadlags() # TODO: about 1/3 of execution time spent here 
-        self.CalcNoise()
- 
+         
     # appends a record of the lss fit to an hdf5 file
     def WriteLSSFit(self, hdf5file):
         groupname = str(calendar.timegm(self.recordtime.timetuple()))
@@ -376,33 +376,36 @@ class CULombFit:
     
     # calculate and store bad lags
     #@profile
-    def CalcBadlags(self, pwrthresh = True, uselagzero = False):
-        bad_lags = lagstate.bad_lags(self, self.pwr0)
-      
-        if pwrthresh:
-            # get bad lags - power exceeds lag zero power
-            # "Spectral width of SuperDARN echos", Ponomarenko and Waters
-            for rgate in self.ranges:
+    def SetBadlags(self, bad_lags):
+        self.bad_lags = bad_lags
+        self.CalcNoise()
+        self.CalcBadlags()
+
+    def CalcBadlags(self, pwrthresh = False, uselagzero = False):
+        # get bad lags - power exceeds lag zero power
+        # "Spectral width of SuperDARN echos", Ponomarenko and Waters
+
+        for rgate in self.ranges:
+            if pwrthresh:
                 # .. this will only work if we have a good lag zero sample
                 # TODO: work on fall back
-                if not bad_lags[rgate][0]: 
+                if not self.bad_lags[rgate][0]: 
                     i_lags = self.acfi[rgate]
                     q_lags = self.acfq[rgate]
                     samples = i_lags + 1j * q_lags 
                     
                     lagpowers = abs(samples) ** 2
 
-                    bad_lags[rgate] += (lagpowers > (lagpowers[0] * 10.0))# add interference lags
+                    self.bad_lags[rgate] += (lagpowers > (lagpowers[0] * 10.0))# add interference lags
                 else:
+                    pass
                     # if lag zero is bad, we can't filter out lags greater than lag zero because we don't know what it is..
-                    pass 
+
+            if not uselagzero:
+                self.bad_lags[rgate][0] = True
                 
-                self.nlag[rgate,0] = len(bad_lags[rgate]) - sum(bad_lags[rgate])
+            self.nlag[rgate,0] = len(self.bad_lags[rgate]) - sum(self.bad_lags[rgate])
 
-                if not uselagzero:
-                    bad_lags[rgate][0] = True
-
-        self.bad_lags = bad_lags 
 
 # create a COMPACT type h5py dataset using low level API...
 def add_compact_dset(hdf5file, group, dsetname, data, dtype, mask = []):
@@ -455,7 +458,8 @@ def generate_fitlomb(record):
             print 'error reading first rawacf record for ' + str(stime) + '... skipping to next record block'
             hdf5file.close() 
             return 
-
+        
+        badlag_cache = None
         gpu_lambda = None
         if CALC_SIGMA:
             gpu_sigma = None
@@ -463,23 +467,34 @@ def generate_fitlomb(record):
         while drec != None:
             try:
                 fit = CULombFit(drec) # ~ 30% of the time is spent here
-            except:
+            except None:
                 print 'error reading rawacf record, skipping'
                 continue
             
             # create velocity and spectral width space based on maximum transmit frequency
             if gpu_lambda == None:
+                badlag_cache = lagstate.bad_lags(fit)
+                fit.SetBadlags(badlag_cache)
+
                 gpu_lambda = BayesGPU(fit.lags, freqs, alfs, fit.nrang, LAMBDA_FIT)
                 if CALC_SIGMA:
                     gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
 
             # generate new caches on the GPU for the fit if the pulse sequence has changed 
             elif gpu_lambda.npulses != fit.nrang or (not np.array_equal(fit.lags, gpu_lambda.lags)):
+                badlag_cache = lagstate.bad_lags(fit)
+                fit.SetBadlags(badlag_cache)
+
                 gpu_lambda = BayesGPU(fit.lags, freqs, alfs, fit.nrang, LAMBDA_FIT)
+
                 if CALC_SIGMA:
                     gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
+
                 print 'the pulse sequence has changed'
-           
+
+            else:
+                fit.SetBadlags(badlag_cache)
+
             try:
                 fit.CudaProcessPulse(gpu_lambda) # ~ 50%
                 if CALC_SIGMA:
@@ -509,7 +524,7 @@ def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
     parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.03.01.0000")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.03.01.0200")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.03.02.0000")
     parser.add_argument("--enable_sigmafit", help="enable fitting sigma (p_s/v_s) parameters. this will double runtime and GPU VRAM usage", action='store_true', default=False) 
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
     parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default=POOL_SIZE) 
