@@ -23,8 +23,8 @@ mod = pycuda.compiler.SourceModule("""
 #define REAL 0
 #define IMAG 1
 #define MAX_SAMPLES 25
-#define MAX_ALPHAS 512 // MUST BE A POWER OF 2
-#define MAX_FREQS 512 // MUST BE A POWER OF 2
+#define MAX_ALPHAS 64 // MUST BE A POWER OF 2
+#define MAX_FREQS 64 // MUST BE A POWER OF 2
 #define PI (3.141592)
 
 // see generalizing the lomb-scargle periodogram, g. bretthorst
@@ -107,7 +107,7 @@ __global__ void calc_bayes(float *samples, int32_t *lags, float *alphas, float *
                    s_samples[sample_offset + IMAG] * ce_matrix[CS_offset];
         }
 
-        hbar2 = ((pow(r_f, 2) / s_cs_f[i]) + (pow(i_f, 2) / s_cs_f[i])) / 2;
+        hbar2 = ((pow(r_f, 2) / s_cs_f[i]) + (pow(i_f, 2) / s_cs_f[i]));
         P_f[RI_offset] = log10(n_good_samples * 2 * dbar2 - hbar2) * (1 - ((double) n_good_samples)) - log10(s_cs_f[i]);
     }
 
@@ -279,9 +279,9 @@ __global__ void process_peaks(float *samples, float *ce_matrix, float *se_matrix
         int32_t CS_offset = (alfidx * nfreqs * nlags) + (i * nfreqs) + freqidx;
         int32_t sample_offset = threadIdx.x * nlags * 2 + 2*i;
 
-        r_f += samples[sample_offset + REAL] * ce_matrix[CS_offset] + \
+        r_f += samples[sample_offset + REAL] * ce_matrix[CS_offset] - \
                samples[sample_offset + IMAG] * se_matrix[CS_offset];
-        i_f += samples[sample_offset + REAL] * se_matrix[CS_offset] - \
+        i_f += samples[sample_offset + REAL] * se_matrix[CS_offset] + \
                samples[sample_offset + IMAG] * ce_matrix[CS_offset];
     }
 
@@ -323,7 +323,7 @@ def calculate_bayes(s, t, f, alfs, env_model):
     R_f = (np.dot(np.real(s), ce_matrix) + np.dot(np.imag(s), se_matrix)).T
     I_f = (np.dot(np.real(s), se_matrix) - np.dot(np.imag(s), ce_matrix)).T
     
-    hbar2 = ne.evaluate('((R_f ** 2) / CS_f + (I_f ** 2) / CS_f) / 2.')# (19) in [4] 
+    hbar2 = ne.evaluate('((R_f ** 2) / CS_f + (I_f ** 2) / CS_f)')# (19) in [4] 
     
     P_f = np.log10(N * dbar2 - hbar2)  * ((2 - N) / 2.) - np.log10(CS_f)
     return R_f, I_f, hbar2, P_f
@@ -581,10 +581,11 @@ def main():
         print 'P_f calculation error! GPU and CPU matricies do not match'
     '''
 
-    pdb.set_trace()
+    #pdb.set_trace()
     for gate in range(75):
         print gate
         print 'calculated amplitude: ' + str(gpu.amplitudes[gate]) 
+        print 'calculated snr: ' + str(gpu.snr[gate]) 
         print 'calculated freq: ' + str(gpu.vfreq[gate]) 
         print 'calculated decay: ' + str(gpu.walf[gate]) 
         print 'max P_f: ' + str(max(gpu.P_f[gate].flatten()))
@@ -601,8 +602,8 @@ def main():
         print 'mom alf: ' + str(sum(alfs * aprob))
 
      
-        plt.imshow(gpu.P_f[gate])
-        plt.show()
+        #plt.imshow(gpu.P_f[gate])
+        #plt.show()
     # peak about 18 260
     # freq 260
     # alf 18
