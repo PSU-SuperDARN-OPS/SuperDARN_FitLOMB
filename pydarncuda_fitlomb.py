@@ -5,6 +5,9 @@
 # TODO: move raw data to ARSC, process on their machines
 # TODO: look at residual spread of fitacf and fitlomb to samples
 # TODO: look at variance of residual, compare with fitacf
+# TODO: calculate bad lags off of pulse sequence only once per pulse sequence for ~40% speedup
+# TODO: store data in hdf5 file with large vector for entire record, rather than datasets for each?
+# (should reduce data usage and allow for compression)
 import argparse
 import pydarn.sdio as sdio
 import datetime, calendar, time
@@ -13,13 +16,15 @@ import h5py
 import lagstate
 import pdb
 import os
+import getpass
+
 from multiprocessing import Pool, Manager 
 from bigdipper import cache_data, mount_raid0
 
-FITLOMB_REVISION_MAJOR = 2
-FITLOMB_REVISION_MINOR = 4
+FITLOMB_REVISION_MAJOR = 3
+FITLOMB_REVISION_MINOR = 0
 ORIGIN_CODE = 'pydarncuda_fitlomb.py'
-DATA_DIR = '/home/radar/fitlomb/'
+DATA_DIR = '/home/' + getpass.getuser() + '/fitlomb/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
 
 I_OFFSET = 0
@@ -27,19 +32,20 @@ Q_OFFSET = 1
 
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 2000 # m/s, max velocity (doppler shift) to include in lomb
-MAX_W = 1200 # m/s, max spectral width to include in lomb 
-NFREQS = 64 
-NALFS = 64 
+MAX_W = 2000 # m/s, max spectral width to include in lomb 
+NFREQS = 128 
+NALFS = 128 
 MAXPULSES = 300
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
-SNR_THRESH = .10 # minimum ratio of power in fitted signal and residual for a qualtiy fit
-VERR_THRESH = 100
-WERR_THRESH = 100
+SNR_THRESH = .25 # minimum ratio of power in fitted signal and residual for a qualtiy fit
+VERR_THRESH = 50 
+WERR_THRESH = 50 
 C = 3e8
 MAX_TFREQ = 16e6
-POOL_SIZE = 2 # maximum pool size for multiprocessing of fits..
+POOL_SIZE = 8 # maximum pool size for multiprocessing of fits..
 CALC_SIGMA = False 
+DEBUG = False
 
 GROUP_ATTR_TYPES = {\
         'txpow':np.int16,\
@@ -121,8 +127,6 @@ class CULombFit:
         
         self.maxfreqs = 1
         # initialize empty arrays for fitted parameters 
-        self.lfits      = [[] for r in self.ranges]
-        self.sfits      = [[] for r in self.ranges]
 
         self.sd_s       = np.zeros([self.nrang, self.maxfreqs])
         self.w_s_e      = np.zeros([self.nrang, self.maxfreqs])
@@ -232,7 +236,7 @@ class CULombFit:
             add_compact_dset(hdf5file, groupname, 'v_s_std', np.float64(self.v_s_std), h5py.h5t.NATIVE_DOUBLE)
             add_compact_dset(hdf5file, groupname, 'fit_snr_s', np.float64(self.fit_snr_s), h5py.h5t.NATIVE_DOUBLE)
             #add_compact_dset(hdf5file, groupname, 'r2_phase_s', np.float64(self.r2_phase_s), h5py.h5t.NATIVE_DOUBLE)
-        #    @profile 
+    #@profile 
     def CudaProcessPulse(self, gpu):
         lagsmask = []
         isamples = np.zeros([len(self.ranges), 2 * gpu.nlags])
@@ -371,6 +375,7 @@ class CULombFit:
             self.noise = np.mean(noise_samples)
     
     # calculate and store bad lags
+    #@profile
     def CalcBadlags(self, pwrthresh = True, uselagzero = False):
         bad_lags = lagstate.bad_lags(self, self.pwr0)
       
@@ -416,6 +421,7 @@ def add_compact_dset(hdf5file, group, dsetname, data, dtype, mask = []):
     dset.write(h5py.h5s.ALL, h5py.h5s.ALL, data)
 
 # worker function to fitlomb process a block of time
+#@profile
 def generate_fitlomb(record):
         from cuda_bayes import BayesGPU
 
@@ -493,7 +499,7 @@ def generate_fitlomb(record):
 
             #print 'computed ' + str(fit.recordtime)
 
-            drec = sdio.radDataReadRec(myPtr) # ~ 15% of the time is spent here
+            drec = sdio.radDataReadRec(myPtr) # ~ 10% of the time is spent here
 
         hdf5file.close() 
 
@@ -502,12 +508,12 @@ def generate_fitlomb(record):
 def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
-    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.03.01.2000")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.03.10.0000")
+    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.03.01.0000")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.03.01.0200")
     parser.add_argument("--enable_sigmafit", help="enable fitting sigma (p_s/v_s) parameters. this will double runtime and GPU VRAM usage", action='store_true', default=False) 
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
     parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default=POOL_SIZE) 
-    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['ksr.a', 'kod.d'])
+    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['mcm.a'])
     parser.add_argument("--datadir", help="base directory for .fitlomb files (defaults to /home/radar/fitlomb/)", default='/home/radar/fitlomb/') 
 
     # TODO: add channel/beam?
@@ -518,7 +524,7 @@ def main():
     DATA_DIR = args.datadir
     
     # mount raid0 via sshfs on chiniak... (to get write access)
-    mount_raid0()
+    #mount_raid0()
 
     # parse date string and convert to datetime object
     starttime = datetime.datetime(*time.strptime(args.starttime, "%Y.%m.%d.%H%M")[:7])
@@ -555,9 +561,12 @@ def main():
     # i7 with a gtx970 could handle eight
     print 'starting fitlomb worker pool'
     fitlomb_pool = Pool(processes = args.poolsize)
-    
+
     for record in records:
-        fitlomb_pool.apply_async(func=generate_fitlomb, args=(record,))
+        if not DEBUG:
+            fitlomb_pool.apply_async(func=generate_fitlomb, args=(record,))
+        else:
+            generate_fitlomb(record)
 
     fitlomb_pool.close()
     fitlomb_pool.join()

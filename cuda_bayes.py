@@ -23,8 +23,8 @@ mod = pycuda.compiler.SourceModule("""
 #define REAL 0
 #define IMAG 1
 #define MAX_SAMPLES 25
-#define MAX_ALPHAS 64 // MUST BE A POWER OF 2
-#define MAX_FREQS 64 // MUST BE A POWER OF 2
+#define MAX_ALPHAS 128 // MUST BE A POWER OF 2
+#define MAX_FREQS 128 // MUST BE A POWER OF 2
 #define PI (3.141592)
 
 // see generalizing the lomb-scargle periodogram, g. bretthorst
@@ -156,6 +156,31 @@ __global__ void find_peaks(double *P_f, int32_t *peaks, int32_t nalphas)
 }
 
 // assumes nalphas == nfreqs..
+// segment peak on P_f map
+
+// find peak segment
+// normalize peak segment probability
+// multiply 
+// threshold p_f on peak - factor
+// for every point within glob above threshold
+// calculate moment..?
+//
+// ---=------------
+// ------===-------
+// ------=+===-----
+// ==------===-----
+// ----------------
+//
+
+// start at peak idx
+// traverse -> on each thread until below threshold
+// for each thread, take total probability and prob * value
+// traverse <- on each thread until below threshold
+// for each thread, take total probability and prob * value
+// parallel sum probability, prob * value
+// increase prob * value by normalization of prob
+//  
+
 __global__ void moment_peaks(double *P_f, float *freq_peak, float *alf_peak, int32_t nalphas, float *freqs, float *alfs, float *alf_std, float *freq_std, double *amplitudes) 
 {
     int32_t i;
@@ -279,9 +304,9 @@ __global__ void process_peaks(float *samples, float *ce_matrix, float *se_matrix
         int32_t CS_offset = (alfidx * nfreqs * nlags) + (i * nfreqs) + freqidx;
         int32_t sample_offset = threadIdx.x * nlags * 2 + 2*i;
 
-        r_f += samples[sample_offset + REAL] * ce_matrix[CS_offset] - \
+        r_f += samples[sample_offset + REAL] * ce_matrix[CS_offset] + \
                samples[sample_offset + IMAG] * se_matrix[CS_offset];
-        i_f += samples[sample_offset + REAL] * se_matrix[CS_offset] + \
+        i_f += samples[sample_offset + REAL] * se_matrix[CS_offset] - \
                samples[sample_offset + IMAG] * ce_matrix[CS_offset];
     }
 
@@ -310,6 +335,9 @@ __global__ void process_peaks(float *samples, float *ce_matrix, float *se_matrix
     
     snr[threadIdx.x] = fitpwr / rempwr;
 }
+
+
+
 """)
 
 # function to calculate P_f on CPU to check GPU calculations
@@ -521,8 +549,8 @@ def main():
         lags = param['lags']
         freqs = param['freqs']
         alfs = param['alfs']
-        alfs = alfs[::8]
-        freqs = freqs[::8]
+        alfs = alfs[::4]
+        freqs = freqs[::4]
         maxpulses = param['npulses']
         env_model = param['env_model']
         samples = param['samples']
@@ -573,7 +601,6 @@ def main():
     
 
 
-    cuda.memcpy_dtoh(gpu.P_f, gpu.P_f_gpu)
     ''' 
     if max(P_f_cpu.flatten() - gpu.P_f.flatten()[0:(len(freqs) * len(alfs))]) < 3e-6:
         print 'P_f on GPU and CPU match'
@@ -581,13 +608,12 @@ def main():
         print 'P_f calculation error! GPU and CPU matricies do not match'
     '''
 
+    cuda.memcpy_dtoh(gpu.P_f, gpu.P_f_gpu)
     #pdb.set_trace()
     for gate in range(75):
         print gate
         print 'calculated amplitude: ' + str(gpu.amplitudes[gate]) 
         print 'calculated snr: ' + str(gpu.snr[gate]) 
-        print 'calculated freq: ' + str(gpu.vfreq[gate]) 
-        print 'calculated decay: ' + str(gpu.walf[gate]) 
         print 'max P_f: ' + str(max(gpu.P_f[gate].flatten()))
         print 'min P_f: ' + str(min(gpu.P_f[gate].flatten()))
         # so, scale by P_f[0], renormalize again later
@@ -598,12 +624,16 @@ def main():
 
         fprob = np.sum(p_f, axis=0)
         aprob = np.sum(p_f, axis=1)
+
+        print 'calculated freq: ' + str(gpu.vfreq[gate]) 
         print 'mom freq: ' + str(sum(freqs * fprob))
+
+        print 'calculated decay: ' + str(gpu.walf[gate]) 
         print 'mom alf: ' + str(sum(alfs * aprob))
 
      
-        #plt.imshow(gpu.P_f[gate])
-        #plt.show()
+        plt.imshow(gpu.P_f[gate])
+        plt.show()
     # peak about 18 260
     # freq 260
     # alf 18

@@ -6,18 +6,19 @@ import time
 import pdb
 import signal
 import datetime
-import os, sys
+import os, sys, getpass
+
 from dateutil.relativedelta import relativedelta
 
 SSHTIMEOUT = 0 # bigdipper may take a while..
-
+USER = getpass.getuser()
 ARCHIVE_DIR = '/sam-qfs/SUPERDARN/mirror/sddata/rawacf/' 
-CACHE_DIR = '/home/radar/raid0/SuperDARN/data/rawacf/'
+CACHE_DIR = '/home/' + USER + '/raid0/SuperDARN/data/rawacf/'
 ARCHIVE_COMP = 'bigdipper.arsc.edu' 
 ARCHIVE_USER = 'jtklein'
 RSYNC_PATH = '--rsync-path=/usr/local/bin/rsync'
 STAGE_CMD = 'bash ~/sd_archive_tools/stage_rawacfs.bash'
-LOCAL_FITLOMB_DIR = '/home/radar/fitlomb/'
+LOCAL_FITLOMB_DIR = '/home/' + USER + '/fitlomb/'
 REMOTE_FITLOMB_DIR = '/sam-qfs/SUPERDARN/fitlomb/'
 
 # runs a command over ssh, returns response
@@ -95,9 +96,10 @@ def cache_data(radar, startdate, enddate):
 def mount_raid0():
     # check if raid0 is already mounted
     # if not, mount using sshfs
-    if not os.path.exists('/home/radar/raid0/SuperDARN'):
+    if not os.path.exists('/home/' + USER + '/raid0/SuperDARN'):
         print 'mounting qnap raid...'
-        cmdlist = ['sshfs', 'jtklein@chiniak:/raid0', '/home/radar/raid0']
+        cmdlist = ['sshfs', 'jtklein@chiniak:/raid0', '/home/' + USER + '/raid0']
+        print ' '.join(cmdlist)
         s = subprocess.Popen(cmdlist, stdout = subprocess.PIPE, stderr = subprocess.PIPE)
         out, err = s.communicate()
     else:
@@ -108,4 +110,4 @@ if __name__ == '__main__':
 
     startdate = datetime.datetime(2014,03,04)
     enddate = datetime.datetime(2014,03,05)
-    cache_data('pgr', startdate, enddate)
+    #cache_data('pgr', startdate, enddate)

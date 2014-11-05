@@ -11,11 +11,12 @@ import matplotlib.dates as dates
 import numpy as np
 import glob
 import time 
+import getpass
 import pdb
 
 BEAMS = 16
 MAX_LOMBDEPTH = 1
-DATADIR = '/home/radar/fitlomb/'
+DATADIR = '/home/' + getpass.getuser() + '/fitlomb/'
 PLOTDIR = './plots/'
 VEL_CMAP = plt.cm.RdBu
 FREQ_CMAP = plt.cm.spectral
@@ -246,7 +247,7 @@ def Plot_w_l(lombfit, beam, starttime, endtime, cmap = FREQ_CMAP, image = False)
 
 def Plot_v(lombfit, beam, starttime, endtime, cmap = plt.cm.get_cmap("SD_V"), image = False):
     times, ranges, vels = getParam(lombfit, beam, 'v', starttime, endtime, maskparam  ='qflg')
-    PlotRTI(times, ranges, vels, cmap, [-500, 500])
+    PlotRTI(times, ranges, vels, cmap, [-1000, 1000])
     FormatRTI('time (UTC)', 'slant range (km)', 'v (m/s)', 'v (m/s)', beam)
     if not image:
         plt.show()
@@ -334,8 +335,8 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
 
-    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.04.01.00")
-    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.05.01.00")
+    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.03.01.00")
+    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.03.12.00")
     parser.add_argument("--maxplotlen", help="maximum length of a rti plot, in hours", default = 24)
     parser.add_argument("--radar", help="radar to create data from", default='mcm.a')
     parser.add_argument("--beam", help="beam to plot", default=9)
