@@ -27,6 +27,7 @@ mod = pycuda.compiler.SourceModule("""
 #define MAX_FREQS 512 // MUST BE A POWER OF 2
 #define PI (3.141592)
 
+// __device__ float calc_amp(float alf, int32_t alfidx, int32_t freqidx, float *ce_matrix, float *se_matrix,  int32_t *lagmask, float *s_times, float *samples, int32_t nlags, int32_t nfreqs);
 // see generalizing the lomb-scargle periodogram, g. bretthorst
 __global__ void calc_bayes(float *samples, int32_t *lags, float *alphas, float *lag_times, float *ce_matrix, float *se_matrix, double *P_f, float env_model, int32_t nsamples, int32_t nalphas, int32_t *n_good_lags_v)
 {
@@ -299,6 +300,9 @@ __global__ void process_peaks(float *samples, float *ce_matrix, float *se_matrix
 
     int32_t alfidx = ((peakidx - (peakidx % nfreqs)) % (nfreqs * nalphas)) / nfreqs;
     int32_t freqidx = peakidx % nfreqs;
+
+    // calculate peak freq by looking at neighbors on p_f and calculating normalized momentish calculation
+
     peakfreq = freqs[freqidx];
     peakalf = alfs[alfidx];
 
@@ -347,7 +351,36 @@ __global__ void process_peaks(float *samples, float *ce_matrix, float *se_matrix
     snr[threadIdx.x] = fitpwr / rempwr;
 }
 
+/*
+__device__ float calc_amp(float alf, int32_t alfidx, int32_t freqidx, float *ce_matrix, float *se_matrix,  int32_t *lagmask, float *s_times, float *samples, int32_t nlags, int32_t nfreqs)
+{
+    int32_t i;
+    float cs_f = 0;
+    float r_f = 0;
+    float i_f = 0;
 
+    // calculate cs_f at peak, then calculate amplitude
+    for(i = 0; i < nlags; i++) {
+        cs_f += pow(exp(-alf * s_times[i]), 2) * (lagmask[threadIdx.x * nlags + i] != 0);
+    }
+    if(blockIdx.x == 0 && threadIdx.x == 0) {
+        printf("lagmask[%d] = %d\\n", threadIdx.x * nlags + i, lagmask[threadIdx.x * nlags + 5]);
+        printf("s_times[%d] = %.2f\\n", 1, s_times[2]);
+    }
+    // recalculate r_f and i_f at peak (not caching eliminates many global memory accesses and reduces memory usage 
+    for(i = 0; i < nlags; i++) {
+        int32_t CS_offset = (alfidx * nfreqs * nlags) + (i * nfreqs) + freqidx;
+        int32_t sample_offset = threadIdx.x * nlags * 2 + 2*i;
+
+        r_f += samples[sample_offset + REAL] * ce_matrix[CS_offset] - \
+               samples[sample_offset + IMAG] * se_matrix[CS_offset];
+        i_f += samples[sample_offset + REAL] * se_matrix[CS_offset] + \
+               samples[sample_offset + IMAG] * ce_matrix[CS_offset];
+    }
+
+    return (r_f + i_f) / cs_f;
+}
+*/
 
 """)
 
@@ -447,10 +480,9 @@ class BayesGPU:
         self.process_peaks = mod.get_function('process_peaks')
 
     def run_bayesfit(self, samples, lagmask, copy_samples = True):
-        self.lagmask = np.int32(lagmask)
-        self.samples = samples
-
         if copy_samples:
+            self.lagmask = np.int32(lagmask)
+            self.samples = samples
             cuda.memcpy_htod(self.samples_gpu, self.samples)
             cuda.memcpy_htod(self.lagmask_gpu, self.lagmask)
     
@@ -562,8 +594,8 @@ def main():
         lags = param['lags']
         freqs = param['freqs']
         alfs = param['alfs']
-        alfs = alfs[::4]
-        freqs = freqs[::4]
+        #alfs = alfs[::4]
+        #freqs = freqs[::4]
         maxpulses = param['npulses']
         env_model = param['env_model']
         samples = param['samples']
@@ -624,33 +656,63 @@ def main():
     cuda.memcpy_dtoh(gpu.P_f, gpu.P_f_gpu)
     #pdb.set_trace()
     for gate in range(75):
-        print gate
-        print 'calculated amplitude: ' + str(gpu.amplitudes[gate]) 
-        print 'calculated snr: ' + str(gpu.snr[gate]) 
-        print 'max P_f: ' + str(max(gpu.P_f[gate].flatten()))
-        print 'min P_f: ' + str(min(gpu.P_f[gate].flatten()))
-        # so, scale by P_f[0], renormalize again later
-        p_f = gpu.P_f[gate]
-        p_f -= p_f[0][0] # normalize off first element
-        p_f = 10 ** p_f
-        p_f /= sum(p_f.flatten())
+        if gate == 14:
+            print gate
+            print 'calculated amplitude: ' + str(gpu.amplitudes[gate]) 
+            print 'calculated snr: ' + str(gpu.snr[gate]) 
+            print 'max P_f: ' + str(max(gpu.P_f[gate].flatten()))
+            print 'min P_f: ' + str(min(gpu.P_f[gate].flatten()))
+            # so, scale by P_f[0], renormalize again later
+            p_f = gpu.P_f[gate]
+            p_f -= p_f[0][0] # normalize off first element
+            p_f = 10 ** p_f
+            p_f /= sum(p_f.flatten())
 
-        fprob = np.sum(p_f, axis=0)
-        aprob = np.sum(p_f, axis=1)
+            fprob = np.sum(p_f, axis=0)
+            aprob = np.sum(p_f, axis=1)
 
-        print 'calculated freq: ' + str(gpu.vfreq[gate]) 
-        print 'mom freq: ' + str(sum(freqs * fprob))
+            print 'calculated freq: ' + str(gpu.vfreq[gate]) 
+            print 'mom freq: ' + str(sum(freqs * fprob))
 
-        print 'calculated decay: ' + str(gpu.walf[gate]) 
-        print 'mom alf: ' + str(sum(alfs * aprob))
+            print 'calculated decay: ' + str(gpu.walf[gate]) 
+            print 'mom alf: ' + str(sum(alfs * aprob))
 
-     
-        plt.imshow(gpu.P_f[gate])
-        plt.show()
+            plt.imshow(p_f > max(p_f.flatten()) * .1, interpolation='none')
+            plt.imshow(p_f, interpolation='none')
+            plt.show()
+    
     # peak about 18 260
     # freq 260
     # alf 18
+    gpu.run_bayesfit(samples, lagmask, copy_samples = False)
+    gpu.process_bayesfit(tfreq, noise)
+    
+    for gate in range(75):
+        if gate == 14:
+            print gate
+            print 'calculated amplitude: ' + str(gpu.amplitudes[gate]) 
+            print 'calculated snr: ' + str(gpu.snr[gate]) 
+            print 'max P_f: ' + str(max(gpu.P_f[gate].flatten()))
+            print 'min P_f: ' + str(min(gpu.P_f[gate].flatten()))
+            # so, scale by P_f[0], renormalize again later
+            p_f = gpu.P_f[gate]
+            p_f -= p_f[0][0] # normalize off first element
+            p_f = 10 ** p_f
+            p_f /= sum(p_f.flatten())
 
+            fprob = np.sum(p_f, axis=0)
+            aprob = np.sum(p_f, axis=1)
+
+            print 'calculated freq: ' + str(gpu.vfreq[gate]) 
+            print 'mom freq: ' + str(sum(freqs * fprob))
+
+            print 'calculated decay: ' + str(gpu.walf[gate]) 
+            print 'mom alf: ' + str(sum(alfs * aprob))
+
+            plt.imshow(p_f > max(p_f.flatten()) * .1, interpolation='none')
+            plt.imshow(p_f, interpolation='none')
+            plt.show()
+    
 def moment_peak(P_f, alphas, freqs):
     return 0, 0, 0, 0
 if __name__ == '__main__':

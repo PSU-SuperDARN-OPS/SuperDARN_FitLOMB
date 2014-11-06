@@ -15,7 +15,7 @@ import getpass
 import pdb
 
 BEAMS = 16
-MAX_LOMBDEPTH = 1
+MAX_LOMBDEPTH = 2
 DATADIR = '/home/' + getpass.getuser() + '/fitlomb/'
 PLOTDIR = './plots/'
 VEL_CMAP = plt.cm.RdBu
@@ -171,7 +171,8 @@ def getPulses(lombfit, beams, starttime, endtime):
     return pulses
 
 def PlotRTI(times, ranges, z, cmap, lim):
-    for i in range(1):
+    for i in range(MAX_LOMBDEPTH):
+        plt.subplot(MAX_LOMBDEPTH,1,i+1)
         x = dates.date2num(times) 
         maxranges = ranges[np.argmax([len(r) for r in ranges])]
         y = maxranges
