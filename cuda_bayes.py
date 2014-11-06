@@ -23,8 +23,8 @@ mod = pycuda.compiler.SourceModule("""
 #define REAL 0
 #define IMAG 1
 #define MAX_SAMPLES 25
-#define MAX_ALPHAS 256 // MUST BE A POWER OF 2
-#define MAX_FREQS 256 // MUST BE A POWER OF 2
+#define MAX_ALPHAS 512 // MUST BE A POWER OF 2
+#define MAX_FREQS 512 // MUST BE A POWER OF 2
 #define PI (3.141592)
 
 // see generalizing the lomb-scargle periodogram, g. bretthorst
@@ -446,11 +446,13 @@ class BayesGPU:
         self.find_peaks = mod.get_function('find_peaks')
         self.process_peaks = mod.get_function('process_peaks')
 
-    def run_bayesfit(self, samples, lagmask):
+    def run_bayesfit(self, samples, lagmask, copy_samples = True):
         self.lagmask = np.int32(lagmask)
         self.samples = samples
-        cuda.memcpy_htod(self.samples_gpu, self.samples)
-        cuda.memcpy_htod(self.lagmask_gpu, self.lagmask)
+
+        if copy_samples:
+            cuda.memcpy_htod(self.samples_gpu, self.samples)
+            cuda.memcpy_htod(self.lagmask_gpu, self.lagmask)
     
         # about 90% of the time is spent on calc_bayes
         self.calc_bayes(self.samples_gpu, self.lagmask_gpu, self.alfs_gpu, self.lag_times_gpu, self.ce_gpu, self.se_gpu, self.P_f_gpu, self.env_model, self.nlags, self.nalfs, self.n_good_lags_gpu, block = (int(self.nfreqs),1,1), grid = (int(self.npulses),1,1))

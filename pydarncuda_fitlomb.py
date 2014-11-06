@@ -6,7 +6,7 @@
 # TODO: look at residual spread of fitacf and fitlomb to samples
 # TODO: look at variance of residual, compare with fitacf
 # TODO: use moment-like fitting of peaks so FREQ/ALF resolution can be reduced..
-# TODO: test multiple frequency
+# TODO: fix qflg for multiple iterations
 # TODO: store data in hdf5 file with large vector for entire record, rather than datasets for each?
 # (should reduce data usage and allow for compression)
 
@@ -25,7 +25,7 @@ from multiprocessing import Pool, Manager
 from bigdipper import cache_data, mount_raid0
 
 FITLOMB_REVISION_MAJOR = 3
-FITLOMB_REVISION_MINOR = 0
+FITLOMB_REVISION_MINOR = 1
 ORIGIN_CODE = 'pydarncuda_fitlomb.py'
 DATA_DIR = '/home/' + getpass.getuser() + '/fitlomb/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
@@ -36,8 +36,8 @@ Q_OFFSET = 1
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 2000 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 2000 # m/s, max spectral width to include in lomb 
-NFREQS = 256 
-NALFS = 256 
+NFREQS = 512 
+NALFS = 512 
 MAXPULSES = 300
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
@@ -46,10 +46,10 @@ VERR_THRESH = 60
 WERR_THRESH = 60 
 C = 3e8
 MAX_TFREQ = 16e6
-POOL_SIZE = 5 # maximum pool size for multiprocessing of fits..
+POOL_SIZE = 3 # maximum pool size for multiprocessing of fits..
 LOMB_PASSES = 2
 CALC_SIGMA = False 
-DEBUG = True 
+DEBUG = False 
 
 GROUP_ATTR_TYPES = {\
         'txpow':np.int16,\
@@ -241,7 +241,7 @@ class CULombFit:
             add_compact_dset(hdf5file, groupname, 'fit_snr_s', np.float64(self.fit_snr_s), h5py.h5t.NATIVE_DOUBLE)
             #add_compact_dset(hdf5file, groupname, 'r2_phase_s', np.float64(self.r2_phase_s), h5py.h5t.NATIVE_DOUBLE)
     #@profile 
-    def CudaProcessPulse(self, gpu):
+    def CudaProcessPulse(self, gpu, copy_samples = True):
         lagsmask = []
         isamples = np.zeros([len(self.ranges), 2 * gpu.nlags])
 
@@ -263,7 +263,7 @@ class CULombFit:
         lagsmask = np.int8(np.array(lagsmask))
         self.isamples = np.float32(np.array(isamples))
 
-        gpu.run_bayesfit(self.isamples, lagsmask) # TODO: calculate only on good lags for ~50% speedup?
+        gpu.run_bayesfit(self.isamples, lagsmask, copy_samples = copy_samples)
         gpu.process_bayesfit(self.tfreq, self.noise)
 
 
@@ -500,18 +500,28 @@ def generate_fitlomb(record):
                 fit.SetBadlags(badlag_cache)
 
             try:
-                for i in xrange(LOMB_PASSES):
-                    fit.CudaProcessPulse(gpu_lambda) # ~ 50%
-                    if CALC_SIGMA:
-                        fit.CudaProcessPulse(gpu_sigma) # ~ 50%
-                    fit.CudaCopyPeaks(gpu_lambda, i)
-                    if CALC_SIGMA:
-                        fit.CudaCopyPeaks(gpu_sigma, i)
+                fit.CudaProcessPulse(gpu_lambda)
+                if CALC_SIGMA:
+                    fit.CudaProcessPulse(gpu_sigma)
 
+                fit.CudaCopyPeaks(gpu_lambda)
+                if CALC_SIGMA:
+                    fit.CudaCopyPeaks(gpu_sigma)
+                
+                if(LOMB_PASSES >= 1):
+                    for i in xrange(1, LOMB_PASSES):
+                        fit.CudaProcessPulse(gpu_lambda, copy_samples = False) 
+                        if CALC_SIGMA:
+                            fit.CudaProcessPulse(gpu_sigma, copy_samples = False) 
+
+                        fit.CudaCopyPeaks(gpu_lambda, i)
+                        if CALC_SIGMA:
+                            fit.CudaCopyPeaks(gpu_sigma, i)
+       
                 fit.WriteLSSFit(hdf5file) # 4 %
 
                 #fit.CudaPlotFit(gpu_lambda)
-	    except:
+	    except None:
 		print 'error fitting file, skipping record at ' + str(fit.recordtime) 
 
             drec = sdio.radDataReadRec(myPtr) # ~ 10% of the time is spent here
@@ -530,8 +540,8 @@ def generate_fitlomb(record):
 def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
-    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.03.06.0000")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.03.08.0000")
+    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.03.01.0000")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.03.12.0000")
     parser.add_argument("--enable_sigmafit", help="enable fitting sigma (p_s/v_s) parameters. this will double runtime and GPU VRAM usage", action='store_true', default=False) 
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
     parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default=POOL_SIZE) 
@@ -579,9 +589,8 @@ def main():
             stime = etime
     
     # run pool of records in parallel
-    # each worker takes 1 CPU and about 200 MB of GPU memory for 512x512 frequency/alpha resolution
     # so, two workers on kodiak-devel
-    # i7 with a gtx970 could handle eight
+    # an i7 with a gtx970 could handle.. at least eight 
     print 'starting fitlomb worker pool'
     fitlomb_pool = Pool(processes = args.poolsize)
 
