@@ -1,13 +1,15 @@
+#!/usr/bin/python2
 # jon klein, jtklein@alaska.
 # functions to calculate a fitlomb (generalized lomb-scargle peridogram) from a rawacf
 # mit license
 
-# TODO: move raw data to ARSC, process on their machines
 # TODO: look at residual spread of fitacf and fitlomb to samples
 # TODO: look at variance of residual, compare with fitacf
-# TODO: calculate bad lags off of pulse sequence only once per pulse sequence for ~40% speedup
+# TODO: use moment-like fitting of peaks so FREQ/ALF resolution can be reduced..
+# TODO: test multiple frequency
 # TODO: store data in hdf5 file with large vector for entire record, rather than datasets for each?
 # (should reduce data usage and allow for compression)
+
 import argparse
 import pydarn.sdio as sdio
 import datetime, calendar, time
@@ -17,6 +19,7 @@ import lagstate
 import pdb
 import os
 import getpass
+import glob
 
 from multiprocessing import Pool, Manager 
 from bigdipper import cache_data, mount_raid0
@@ -33,19 +36,20 @@ Q_OFFSET = 1
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 2000 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 2000 # m/s, max spectral width to include in lomb 
-NFREQS = 128 
-NALFS = 128 
+NFREQS = 256 
+NALFS = 256 
 MAXPULSES = 300
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
-SNR_THRESH = .5 # minimum ratio of power in fitted signal and residual for a qualtiy fit
-VERR_THRESH = 50 
-WERR_THRESH = 50 
+SNR_THRESH = .25 # minimum ratio of power in fitted signal and residual for a qualtiy fit
+VERR_THRESH = 60 
+WERR_THRESH = 60 
 C = 3e8
 MAX_TFREQ = 16e6
-POOL_SIZE = 8 # maximum pool size for multiprocessing of fits..
+POOL_SIZE = 5 # maximum pool size for multiprocessing of fits..
+LOMB_PASSES = 2
 CALC_SIGMA = False 
-DEBUG = False 
+DEBUG = True 
 
 GROUP_ATTR_TYPES = {\
         'txpow':np.int16,\
@@ -127,7 +131,7 @@ class CULombFit:
         self.vimax_thresh = MAX_V - 50
         self.vimin_thresh = 100
         
-        self.maxfreqs = 1
+        self.maxfreqs = LOMB_PASSES
         # initialize empty arrays for fitted parameters 
 
         self.sd_s       = np.zeros([self.nrang, self.maxfreqs])
@@ -496,38 +500,42 @@ def generate_fitlomb(record):
                 fit.SetBadlags(badlag_cache)
 
             try:
-                fit.CudaProcessPulse(gpu_lambda) # ~ 50%
-                if CALC_SIGMA:
-                    fit.CudaProcessPulse(gpu_sigma) # ~ 50%
-                fit.CudaCopyPeaks(gpu_lambda)
-                if CALC_SIGMA:
-                    fit.CudaCopyPeaks(gpu_sigma)
-                fit.WriteLSSFit(hdf5file) # 4 %
+                for i in xrange(LOMB_PASSES):
+                    fit.CudaProcessPulse(gpu_lambda) # ~ 50%
+                    if CALC_SIGMA:
+                        fit.CudaProcessPulse(gpu_sigma) # ~ 50%
+                    fit.CudaCopyPeaks(gpu_lambda, i)
+                    if CALC_SIGMA:
+                        fit.CudaCopyPeaks(gpu_sigma, i)
 
-                '''if calendar.timegm(fit.recordtime.timetuple()) == 1393676837:
-                    import pdb
-                    pdb.set_trace()'''
+                fit.WriteLSSFit(hdf5file) # 4 %
 
                 #fit.CudaPlotFit(gpu_lambda)
 	    except:
 		print 'error fitting file, skipping record at ' + str(fit.recordtime) 
 
-            #print 'computed ' + str(fit.recordtime)
-
             drec = sdio.radDataReadRec(myPtr) # ~ 10% of the time is spent here
 
         hdf5file.close() 
+        
+        # remove tmp rawacf file
+        tmprawacf = glob.glob(etime.strftime('/tmp/sd/*.*.%Y%m%d.%H%M*.') + radar + '.rawacf')
+        if len(tmprawacf) == 1:
+            os.remove(tmprawacf[0])
+        else:
+            print 'error removing rawacf temp file'
 
 
 #@profile
 def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
-    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.03.01.0000")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.03.02.0000")
+    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.03.06.0000")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.03.08.0000")
     parser.add_argument("--enable_sigmafit", help="enable fitting sigma (p_s/v_s) parameters. this will double runtime and GPU VRAM usage", action='store_true', default=False) 
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
     parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default=POOL_SIZE) 
+    parser.add_argument("--passes", help="numper of lomb fit passes", default=LOMB_PASSES) 
     parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['mcm.a'])
     parser.add_argument("--datadir", help="base directory for .fitlomb files (defaults to /home/radar/fitlomb/)", default='/home/radar/fitlomb/') 
 

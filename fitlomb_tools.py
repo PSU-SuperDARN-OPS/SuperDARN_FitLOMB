@@ -324,8 +324,8 @@ def PlotTime(radar, starttime, endtime, directory, beams):
     Plot_v(lombfit, beams, starttime, endtime, image = True)
 
 
-    plot_vector(lombfit, beams, 'v_e' , '', starttime, endtime, vmax = 300, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
-    plot_vector(lombfit, beams, 'w_l_e' , '', starttime, endtime, vmax = 400, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
+    plot_vector(lombfit, beams, 'v_e' , '', starttime, endtime, vmax = 200, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
+    plot_vector(lombfit, beams, 'w_l_e' , '', starttime, endtime, vmax = 200, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
     plot_vector(lombfit, beams, 'nlag' , '', starttime, endtime, vmax = 25, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
     #plot_vector(lombfit, beams, 'r2_phase_l' , '', starttime, endtime, vmax = 1, vmin = -1, cmap = plt.cm.get_cmap("SD_V"), image=True)
     lombfit.close()
@@ -336,7 +336,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
 
     parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.03.01.00")
-    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.03.12.00")
+    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.03.05.00")
     parser.add_argument("--maxplotlen", help="maximum length of a rti plot, in hours", default = 24)
     parser.add_argument("--radar", help="radar to create data from", default='mcm.a')
     parser.add_argument("--beam", help="beam to plot", default=9)

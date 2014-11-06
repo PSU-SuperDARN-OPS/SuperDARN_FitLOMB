@@ -23,8 +23,8 @@ mod = pycuda.compiler.SourceModule("""
 #define REAL 0
 #define IMAG 1
 #define MAX_SAMPLES 25
-#define MAX_ALPHAS 128 // MUST BE A POWER OF 2
-#define MAX_FREQS 128 // MUST BE A POWER OF 2
+#define MAX_ALPHAS 256 // MUST BE A POWER OF 2
+#define MAX_FREQS 256 // MUST BE A POWER OF 2
 #define PI (3.141592)
 
 // see generalizing the lomb-scargle periodogram, g. bretthorst
@@ -180,8 +180,11 @@ __global__ void find_peaks(double *P_f, int32_t *peaks, int32_t nalphas)
 // parallel sum probability, prob * value
 // increase prob * value by normalization of prob
 //  
-
-__global__ void moment_peaks(double *P_f, float *freq_peak, float *alf_peak, int32_t nalphas, float *freqs, float *alfs, float *alf_std, float *freq_std, double *amplitudes) 
+// thread for each frequency
+// block for each pulse range
+// grid for each pulse sequence
+/*
+__global__ void moment_peaks(double *P_f, float *freq_peak, float *alf_peak, int32_t nfreqs, int32_t nalphas, int32_t *peaks, float *freqs, float *alfs, float *alf_std, float *freq_std, double *amplitudes) 
 {
     int32_t i;
     __shared__ float s_freqs[MAX_FREQS];
@@ -191,25 +194,34 @@ __global__ void moment_peaks(double *P_f, float *freq_peak, float *alf_peak, int
     __shared__ float alf_prob[MAX_ALPHAS];
     __shared__ float freq_value[MAX_FREQS];
     __shared__ float freq_prob[MAX_FREQS];
+    int32_t peakidx = peaks[blockIdx.x];
+    int32_t alfidx = ((peakidx - (peakidx % nfreqs)) % (nfreqs * nalphas)) / nfreqs;
+    int32_t freqidx = peakidx % nfreqs;
+
+    float apex = (float) P_f[peakidx];
+    float factor = (apex - .30103); // -.30103 is log10(.5)
+    float p_f_norm = (float) P_f[blockIdx.x * blockDim.x * nalphas]; // store value of first item in P_f for first-pass normalization of P_f 
 
     s_freqs[threadIdx.x] = freqs[threadIdx.x];
     s_alfs[threadIdx.x] = alfs[threadIdx.x];
-    
-    // compute frequency along max along frequency axis
-    for(i = 0; i < nalphas; i++) {
-        int32_t P_f_idx = (blockIdx.x * blockDim.x * nalphas) + (i * blockDim.x) + threadIdx.x;
-        float p_f = P_f[P_f_idx];
+     
+    alf_value[threadIdx.x] = 0;
+    freq_value[threadIdx.x] = 0;
+    alf_prob[threadIdx.x] = 0;
+    freq_prob[threadIdx.x] = 0;
 
-        // TODO: figure out how to do this in log probabilities..
-        alf_value[threadIdx.x] += s_alfs[i] * p_f;
+    // compute segment moment frequency peak 
+    for(i = alfidx; i < nalphas; i++) {
+        int32_t P_f_idx = (blockIdx.x * blockDim.x * nalphas) + (i * blockDim.x) + threadIdx.x;
+        float p_f = pow(10, (P_f[P_f_idx] - p_f_norm));
+        
         freq_value[threadIdx.x] += s_freqs[threadIdx.x] * p_f;
-        alf_prob[threadIdx.x] += p_f;
         freq_prob[threadIdx.x] += p_f;
+
     }
 
     __syncthreads();
     // parallel reduce values and probabilities 
-    /*
     for(i = blockDim.x/2; i > 0; i >>=1) {
         if(threadIdx.x < i) {
            if(maxval[threadIdx.x + i] > maxval[threadIdx.x]) {
@@ -226,9 +238,8 @@ __global__ void moment_peaks(double *P_f, float *freq_peak, float *alf_peak, int
         alf_std[blockIdx.] = alf_prob[0];
     }
 
-    */
 }
-
+*/
 
 // thread for each pulse, find fwhm and calculate ampltitude
 __global__ void process_peaks(float *samples, float *ce_matrix, float *se_matrix, float *lag_times, float *freqs, float *alfs, double *P_f, float *snr, int32_t *lagmask, int32_t *n_good_lags, int32_t *peaks, int32_t nfreqs, int32_t nalphas, int32_t nlags, int32_t *alphafwhm, int32_t *freqfwhm, double *amplitudes) 
