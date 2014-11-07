@@ -8,6 +8,10 @@
 # TODO: use moment-like fitting of peaks so FREQ/ALF resolution can be reduced..
 # TODO: fix qflg for multiple iterations
 # TODO: store data in hdf5 file with large vector for entire record, rather than datasets for each?
+# TODO: look into not throwing out any samples..
+# TODO: keep moment, not peak
+# TODO: test on extended pulse sequences (e.g mcm 10.31.14)
+# TODO: look at scaling spectral width using average temporal inteval in lags
 # (should reduce data usage and allow for compression)
 
 import argparse

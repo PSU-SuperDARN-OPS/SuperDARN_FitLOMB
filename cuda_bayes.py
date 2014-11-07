@@ -9,7 +9,8 @@ from timecube import make_spacecube
 # debugging imports
 import pdb
 import matplotlib.pyplot as plt
-# todo: add second moment based error calculations
+# TODO: add second moment based error calculations
+# TODO: investigate negative amplitude..
 
 C = 3e8
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
@@ -27,7 +28,8 @@ mod = pycuda.compiler.SourceModule("""
 #define MAX_FREQS 512 // MUST BE A POWER OF 2
 #define PI (3.141592)
 
-// __device__ float calc_amp(float alf, int32_t alfidx, int32_t freqidx, float *ce_matrix, float *se_matrix,  int32_t *lagmask, float *s_times, float *samples, int32_t nlags, int32_t nfreqs);
+__device__ float calc_amp(float alf, int32_t alfidx, int32_t freqidx, float *ce_matrix, float *se_matrix,  int32_t *lagmask, float *s_times, float *samples, int32_t nlags, int32_t nfreqs);
+
 // see generalizing the lomb-scargle periodogram, g. bretthorst
 __global__ void calc_bayes(float *samples, int32_t *lags, float *alphas, float *lag_times, float *ce_matrix, float *se_matrix, double *P_f, float env_model, int32_t nsamples, int32_t nalphas, int32_t *n_good_lags_v)
 {
@@ -249,7 +251,6 @@ __global__ void process_peaks(float *samples, float *ce_matrix, float *se_matrix
     int32_t i;
     float fitpwr = 0;
     float rempwr = 0;
-    float cs_f = 0;
     double apex = P_f[peakidx];
 
     float peakamp;
@@ -302,34 +303,13 @@ __global__ void process_peaks(float *samples, float *ce_matrix, float *se_matrix
     int32_t freqidx = peakidx % nfreqs;
 
     // calculate peak freq by looking at neighbors on p_f and calculating normalized momentish calculation
-
     peakfreq = freqs[freqidx];
     peakalf = alfs[alfidx];
+    peakamp = calc_amp(peakalf, alfidx, freqidx, ce_matrix, se_matrix,  lagmask, s_times, samples, nlags, nfreqs);
 
-    // calculate cs_f at peak, then calculate amplitude
-    for(i = 0; i < nlags; i++) {
-        cs_f += pow(exp(-peakalf * s_times[i]), 2) * (lagmask[threadIdx.x * nlags + i] != 0);
-    }
-    
-    // recalculate r_f and i_f at peak (not caching eliminates many global memory accesses and reduces memory usage by 33%)
-    float r_f = 0;
-    float i_f = 0;
-    
-    for(i = 0; i < nlags; i++) {
-        int32_t CS_offset = (alfidx * nfreqs * nlags) + (i * nfreqs) + freqidx;
-        int32_t sample_offset = threadIdx.x * nlags * 2 + 2*i;
-
-        r_f += samples[sample_offset + REAL] * ce_matrix[CS_offset] + \
-               samples[sample_offset + IMAG] * se_matrix[CS_offset];
-        i_f += samples[sample_offset + REAL] * se_matrix[CS_offset] - \
-               samples[sample_offset + IMAG] * ce_matrix[CS_offset];
-    }
-
-    peakamp = (r_f + i_f) / cs_f;
-
+    amplitudes[threadIdx.x] = peakamp;
     alphafwhm[threadIdx.x] = afwhm;
     freqfwhm[threadIdx.x] = ffwhm;
-    amplitudes[threadIdx.x] = peakamp;
     
     // on each peak-thread, calculate fitted signal, fitted signal power, and remaining power
     for (i = 0; i < nlags; i++) {
@@ -351,7 +331,45 @@ __global__ void process_peaks(float *samples, float *ce_matrix, float *se_matrix
     snr[threadIdx.x] = fitpwr / rempwr;
 }
 
+// normalize log prob to peak
 /*
+__device__ calc_peak(int32_t peakidx, int32_t width , freqs, alfs, peak p)
+{
+    int32_t i;
+    int32_t j;
+    int32_t reach = (SPOT_WIDTH-1)/2;
+
+    p.freq = 0;
+    p.alf = 0;
+    p.amp = 0;
+    
+    // normalize p_f across spot..
+    float p_f[SPOT_WIDTH * SPOT_WIDTH];
+    float p_f_peak = P_f[peakidx];
+    float p_f_sum = 0;
+    
+    // de-log and cache spot around peak
+    for(i = 0; (i < SPOT_WIDTH * SPOT_WIDTH) && (alfidx + i - reach < nalfs) && (alfidx + i - reach >= 0); i++ ) {
+        for(j = 0; j < SPOT_WIDTH && (freqidx + j - reach < nfreqs) && (freqidx + j - reach >= 0); j++) {
+            int32_t idx = peakidx + (j - reach) + (i - reach) * nalfs;
+            p_f[i*3 + j] = pow(10, P_f[idx] - p_f_peak);
+            p_f_sum += p_f[i*3 + j]; 
+        }
+    }
+    
+    // normalize probability and calculate average freq/alf
+    for(i = 0; (i < SPOT_WIDTH * SPOT_WIDTH) && (alfidx + i - reach < nalfs) && (alfidx + i - reach >= 0); i++ ) {
+        for(j = 0; j < SPOT_WIDTH && (freqidx + j - reach < nfreqs) && (freqidx + j - reach >= 0); j++) {
+            p_f[i*3 + j] /= p_f_sum;
+            p.freq += p_f[i*3 + j] * freqs[freqidx + j - reach];
+            p.alf += p_f[i*3 + j] * alfs[alfidx + i - reach];
+            p.amp += p_f[i*3 + j] * calc_amp(....);
+        }
+    }
+    
+    return p;
+}
+*/
 __device__ float calc_amp(float alf, int32_t alfidx, int32_t freqidx, float *ce_matrix, float *se_matrix,  int32_t *lagmask, float *s_times, float *samples, int32_t nlags, int32_t nfreqs)
 {
     int32_t i;
@@ -363,24 +381,20 @@ __device__ float calc_amp(float alf, int32_t alfidx, int32_t freqidx, float *ce_
     for(i = 0; i < nlags; i++) {
         cs_f += pow(exp(-alf * s_times[i]), 2) * (lagmask[threadIdx.x * nlags + i] != 0);
     }
-    if(blockIdx.x == 0 && threadIdx.x == 0) {
-        printf("lagmask[%d] = %d\\n", threadIdx.x * nlags + i, lagmask[threadIdx.x * nlags + 5]);
-        printf("s_times[%d] = %.2f\\n", 1, s_times[2]);
-    }
-    // recalculate r_f and i_f at peak (not caching eliminates many global memory accesses and reduces memory usage 
+
+    // recalculate r_f and i_f at peak 
     for(i = 0; i < nlags; i++) {
         int32_t CS_offset = (alfidx * nfreqs * nlags) + (i * nfreqs) + freqidx;
         int32_t sample_offset = threadIdx.x * nlags * 2 + 2*i;
 
-        r_f += samples[sample_offset + REAL] * ce_matrix[CS_offset] - \
+        r_f += samples[sample_offset + REAL] * ce_matrix[CS_offset] + \
                samples[sample_offset + IMAG] * se_matrix[CS_offset];
-        i_f += samples[sample_offset + REAL] * se_matrix[CS_offset] + \
+        i_f += samples[sample_offset + REAL] * se_matrix[CS_offset] - \
                samples[sample_offset + IMAG] * ce_matrix[CS_offset];
     }
-
+    printf("%d r_f: %.5f, i_f: %.5f, cs_f: %.5f\\n", threadIdx.x, r_f, i_f, cs_f);
     return (r_f + i_f) / cs_f;
 }
-*/
 
 """)
 
@@ -548,10 +562,10 @@ class BayesGPU:
 # run kernprof -l cuda_bayes.py
 # then python -m line_profiler cuda_bayes.py.lprof to view results
 def main():
-    SYNTHETIC = False 
+    SYNTHETIC = False
 
     f = [2.9]
-    amp = [27000.]
+    amp = [100.]
     alf = [33.5]
 
     if SYNTHETIC:
@@ -563,7 +577,7 @@ def main():
 
         maxpulses = 2
         tfreq = 30 
-        noise = 1e-6#0.001
+        noise = .10
         env_model = LAMBDA_FIT 
         lmask = [0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0]
         lagmask = np.tile(lmask, maxpulses)
@@ -585,8 +599,8 @@ def main():
         
         samples = np.tile(np.float32(list(chain.from_iterable(izip(np.real(signal), np.imag(signal))))), maxpulses)
 
-        freqs = np.linspace(-fs/2, fs/2, 16)
-        alfs = np.linspace(0,fs/2, 16)
+        freqs = np.linspace(-fs/2, fs/2, 64)
+        alfs = np.linspace(0,fs/2, 64)
 
     else: 
         import pickle
@@ -594,14 +608,17 @@ def main():
         lags = param['lags']
         freqs = param['freqs']
         alfs = param['alfs']
-        #alfs = alfs[::4]
-        #freqs = freqs[::4]
+        alfs = alfs[::4]
+        freqs = freqs[::4]
         maxpulses = param['npulses']
         env_model = param['env_model']
         samples = param['samples']
         lagmask = param['lagmask']
         tfreq = param['tfreq']
         noise = param['noise']
+    # include all lags..
+#    lagmask[:] = 1
+#    lagmask[:,0] = 0
 
     gpu = BayesGPU(lags, freqs, alfs, maxpulses, env_model)
     gpu.run_bayesfit(samples, lagmask)
@@ -652,11 +669,10 @@ def main():
     else:
         print 'P_f calculation error! GPU and CPU matricies do not match'
     '''
-
     cuda.memcpy_dtoh(gpu.P_f, gpu.P_f_gpu)
     #pdb.set_trace()
     for gate in range(75):
-        if gate == 14:
+        if gate:
             print gate
             print 'calculated amplitude: ' + str(gpu.amplitudes[gate]) 
             print 'calculated snr: ' + str(gpu.snr[gate]) 
@@ -688,7 +704,7 @@ def main():
     gpu.process_bayesfit(tfreq, noise)
     
     for gate in range(75):
-        if gate == 14:
+        if gate == 141:
             print gate
             print 'calculated amplitude: ' + str(gpu.amplitudes[gate]) 
             print 'calculated snr: ' + str(gpu.snr[gate]) 
