@@ -24,7 +24,7 @@ import pdb
 import os
 import getpass
 import glob
-
+import matplotlib.pyplot as plt
 from multiprocessing import Pool, Manager 
 from bigdipper import cache_data, mount_raid0
 
@@ -39,21 +39,21 @@ Q_OFFSET = 1
 
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 2000 # m/s, max velocity (doppler shift) to include in lomb
-MAX_W = 2000 # m/s, max spectral width to include in lomb 
-NFREQS = 512 
-NALFS = 512 
+MAX_W = 1500 # m/s, max spectral width to include in lomb 
+NFREQS = 128 
+NALFS = 128 
 MAXPULSES = 300
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
-SNR_THRESH = .25 # minimum ratio of power in fitted signal and residual for a qualtiy fit
-VERR_THRESH = 60 
-WERR_THRESH = 60 
+SNR_THRESH = .10 # minimum ratio of power in fitted signal and residual for a qualtiy fit
+VERR_THRESH = 70 
+WERR_THRESH = 70 
 C = 3e8
 MAX_TFREQ = 16e6
-POOL_SIZE = 3 # maximum pool size for multiprocessing of fits..
-LOMB_PASSES = 2
+POOL_SIZE = 1 # maximum pool size for multiprocessing of fits..
+LOMB_PASSES = 1
 CALC_SIGMA = False 
-DEBUG = False 
+DEBUG = True
 
 GROUP_ATTR_TYPES = {\
         'txpow':np.int16,\
@@ -153,6 +153,7 @@ class CULombFit:
         self.w_l        = np.zeros([self.nrang, self.maxfreqs])
 
         self.fit_snr_l  = np.zeros([self.nrang, self.maxfreqs])
+        self.fit_snr_l_peak = np.zeros([self.nrang, self.maxfreqs])
         self.fit_snr_s  = np.zeros([self.nrang, self.maxfreqs])
 
         self.r2_phase_l  = np.zeros([self.nrang, self.maxfreqs])
@@ -231,6 +232,7 @@ class CULombFit:
         add_compact_dset(hdf5file, groupname, 'v_e', np.float64(self.v_l_e), h5py.h5t.NATIVE_DOUBLE)
         add_compact_dset(hdf5file, groupname, 'v_l_std', np.float64(self.v_l_std), h5py.h5t.NATIVE_DOUBLE)
         add_compact_dset(hdf5file, groupname, 'fit_snr_l', np.float64(self.fit_snr_l), h5py.h5t.NATIVE_DOUBLE)
+        add_compact_dset(hdf5file, groupname, 'fit_snr_l_peak', np.float64(self.fit_snr_l), h5py.h5t.NATIVE_DOUBLE)
         #add_compact_dset(hdf5file, groupname, 'r2_phase_l', np.float64(self.r2_phase_l), h5py.h5t.NATIVE_DOUBLE)
 
         if CALC_SIGMA:
@@ -305,6 +307,7 @@ class CULombFit:
 
             self.p_l[:,itr] = gpu.p
             self.fit_snr_l[:,itr] = gpu.snr # record ratio of power in signal versus power in fitted signal
+            self.fit_snr_l_peak[:,itr] = gpu.snr_peak # record ratio of power in signal versus power in fitted signal
             
             iflg = (abs(self.v_l) - (self.v_thresh - (self.v_thresh / self.w_thresh) * abs(self.w_l)) > 0) 
             self.iflg[:,itr][iflg[:,0]] = 1
@@ -389,7 +392,7 @@ class CULombFit:
         self.CalcNoise()
         self.CalcBadlags()
 
-    def CalcBadlags(self, pwrthresh = False, uselagzero = False):
+    def CalcBadlags(self, pwrthresh = False, uselagzero = True):
         # get bad lags - power exceeds lag zero power
         # "Spectral width of SuperDARN echos", Ponomarenko and Waters
 
@@ -404,7 +407,7 @@ class CULombFit:
                     
                     lagpowers = abs(samples) ** 2
 
-                    self.bad_lags[rgate] += (lagpowers > (lagpowers[0] * 10.0))# add interference lags
+                    self.bad_lags[rgate] += (lagpowers > (lagpowers[0] * 2.0))# add interference lags
                 else:
                     pass
                     # if lag zero is bad, we can't filter out lags greater than lag zero because we don't know what it is..
@@ -523,7 +526,9 @@ def generate_fitlomb(record):
                             fit.CudaCopyPeaks(gpu_sigma, i)
        
                 fit.WriteLSSFit(hdf5file) # 4 %
-
+                plt.plot(np.log10(fit.pwr0))
+                pdb.set_trace()
+                plt.show()
                 #fit.CudaPlotFit(gpu_lambda)
 	    except None:
 		print 'error fitting file, skipping record at ' + str(fit.recordtime) 
@@ -544,8 +549,8 @@ def generate_fitlomb(record):
 def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
-    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.03.01.0000")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.03.12.0000")
+    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.08.27.0000")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.08.28.0000")
     parser.add_argument("--enable_sigmafit", help="enable fitting sigma (p_s/v_s) parameters. this will double runtime and GPU VRAM usage", action='store_true', default=False) 
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
     parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default=POOL_SIZE) 
@@ -553,7 +558,6 @@ def main():
     parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['mcm.a'])
     parser.add_argument("--datadir", help="base directory for .fitlomb files (defaults to /home/radar/fitlomb/)", default='/home/radar/fitlomb/') 
 
-    # TODO: add channel/beam?
     args = parser.parse_args() 
     
     # TODO: these probably shouldn't be global variables..
@@ -584,7 +588,7 @@ def main():
         print 'adding ' + radar + ' jobs to pool'
         if not radar in ['ksr.a', 'ade.a', 'adw.a', 'sps.a',  'kod.c', 'kod.d', 'mcm.a']:
             print radar + ' is not a UAF radar and may not have data on raid0, syncing with bigdipper...'
-            cache_data(radar, starttime, endtime)
+            #cache_data(radar, starttime, endtime)
 
         stime = starttime
         while stime < endtime:

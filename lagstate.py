@@ -1,9 +1,11 @@
 import numpy as np
+import pdb
+
+
 # TODO: handle case with lag 0 - if lag 0 is bad, use alternate lag zero (if it exists..)
 # (regenerate behavior for rawacf...)
 #@profile
 def good_lags(prm):
-
 # Transmit samples
   ptimes_usec=[]
   psamples=[]
@@ -22,10 +24,13 @@ def good_lags(prm):
             sam1 = lag[0]*(prm.mpinc/prm.smsep) + rbin +smpoff
             sam2 = lag[1]*(prm.mpinc/prm.smsep) + rbin +smpoff
             
+
             good=True
             for smrange in psamples:
-              if (sam1 >= smrange[0]) and (sam1 <= smrange[1]): good=False 
-              if (sam2 >= smrange[0]) and (sam2 <= smrange[1]): good=False
+              if (sam1 >= smrange[0]) and (sam1 <= smrange[1]): 
+                  good=False 
+              if (sam2 >= smrange[0]) and (sam2 <= smrange[1]): 
+                  good=False
             lag_state.append(good)
        good_lags.append(lag_state)
 # Range overlap
@@ -45,6 +50,7 @@ def good_lags(prm):
       for pulse in xrange(prm.mppul):
         ck_range = range_overlap[ck_pulse][pulse] + rbin
         if ((pulse != ck_pulse) and (0 <= ck_range) and (ck_range < prm.nrang)):
+          pdb.set_trace()
           #pwr_ratio = 1  #pwr_ratio = (long) (nave * MIN_PWR_RATIO)
           #min_pwr =  pwr_ratio * pwr0[rbin]
           #if(min_pwr < pwr0[ck_range]):

@@ -14,8 +14,7 @@ import time
 import getpass
 import pdb
 
-BEAMS = 16
-MAX_LOMBDEPTH = 2
+MAX_LOMBDEPTH = 1
 DATADIR = '/home/' + getpass.getuser() + '/fitlomb/'
 PLOTDIR = './plots/'
 VEL_CMAP = plt.cm.RdBu
@@ -25,11 +24,9 @@ SPECW_CMAP = plt.cm.hot
 POWER_CMAP = plt.cm.jet
 WHITE = 3e3
 EPOCH = datetime.datetime(1970,1,1)
-ALLBEAMS = [str(b) for b in range(BEAMS)]
 MINRANGE = 75 
 MAXRANGE = 5000 
 TIMEINT = 20
-BEAMS = [3]#[6, 7,8,9,10]#ALLBEAMS# [9]
 cdict3 = {'red':  ((0.0, 0.0, 0.0),
                    (0.25, 1.0, 1.0),
                    (0.5, 1.0, 0.0),
@@ -327,7 +324,7 @@ def PlotTime(radar, starttime, endtime, directory, beams):
 
     plot_vector(lombfit, beams, 'v_e' , '', starttime, endtime, vmax = 200, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
     plot_vector(lombfit, beams, 'w_l_e' , '', starttime, endtime, vmax = 200, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
-    plot_vector(lombfit, beams, 'nlag' , '', starttime, endtime, vmax = 25, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
+    plot_vector(lombfit, beams, 'nlag' , '', starttime, endtime, vmax = 23, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
     #plot_vector(lombfit, beams, 'r2_phase_l' , '', starttime, endtime, vmax = 1, vmin = -1, cmap = plt.cm.get_cmap("SD_V"), image=True)
     lombfit.close()
 
@@ -336,12 +333,13 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
 
-    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.03.01.00")
-    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.03.05.00")
+    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.08.27.00")
+    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.08.28.00")
     parser.add_argument("--maxplotlen", help="maximum length of a rti plot, in hours", default = 24)
     parser.add_argument("--radar", help="radar to create data from", default='mcm.a')
-    parser.add_argument("--beam", help="beam to plot", default=9)
+    parser.add_argument("--beam", help="beam to plot", default=0)
     parser.add_argument("--plotdir", help="directory to place plots (defaults to ./plots/)", default=PLOTDIR)
+    parser.add_argument("--nametag", help="extra string to attach to file names (defaults to none)", default='') # TODO..
     args = parser.parse_args()
 
     PLOTDIR = args.plotdir 
@@ -370,5 +368,5 @@ if __name__ == '__main__':
                 RADAR = radar
                 try:
                     PlotTime(RADAR, stime, plot_times[stime], DATADIR, [beam]) 
-                except:
+                except None:
                     print 'error plotting ' + str(stime) + '... skipping'
