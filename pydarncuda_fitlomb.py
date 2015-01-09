@@ -54,6 +54,7 @@ POOL_SIZE = 1 # maximum pool size for multiprocessing of fits..
 LOMB_PASSES = 1
 CALC_SIGMA = False 
 DEBUG = True
+LAGDEBUG = True
 
 GROUP_ATTR_TYPES = {\
         'txpow':np.int16,\
@@ -388,9 +389,14 @@ class CULombFit:
     # calculate and store bad lags
     #@profile
     def SetBadlags(self, bad_lags):
-        self.bad_lags = bad_lags
+        if not LAGDEBUG:
+            self.bad_lags = bad_lags
+        else:
+            self.bad_lags = lagstate.bad_lags_conv(self)
+
         self.CalcNoise()
-        self.CalcBadlags()
+        if not LAGDEBUG:
+            self.CalcBadlags()
 
     def CalcBadlags(self, pwrthresh = False, uselagzero = True):
         # get bad lags - power exceeds lag zero power
@@ -437,112 +443,113 @@ def add_compact_dset(hdf5file, group, dsetname, data, dtype, mask = []):
 # worker function to fitlomb process a block of time
 #@profile
 def generate_fitlomb(record):
-        from cuda_bayes import BayesGPU
+    from cuda_bayes import BayesGPU
 
-        # unpack record tuple (passing multiple arguements with map is awkward..)
-        stime, etime, radar, lock = record
+    # unpack record tuple (passing multiple arguements with map is awkward..)
+    stime, etime, radar, lock = record
 
-        print 'worker computing from ' + str(stime) + ' to ' + str(etime)
-        # lock so multiple processes don't step over eachother unpacking and copying rawacfs to /tmp 
-        lock.acquire()
-        myPtr = sdio.radDataOpen(stime,radar,eTime=etime,channel=None,bmnum=None,cp=None,fileType='rawacf',filtered=False, src='local')
-        lock.release()
+    print 'worker computing from ' + str(stime) + ' to ' + str(etime)
+    # lock so multiple processes don't step over eachother unpacking and copying rawacfs to /tmp 
+    lock.acquire()
+    myPtr = sdio.radDataOpen(stime,radar,eTime=etime,channel=None,bmnum=None,cp=None,fileType='rawacf',filtered=False, src='local')
+    lock.release()
 
-        outfilename = stime.strftime('%Y%m%d.%H%M.' + radar + '.fitlomb.hdf5') 
-        outfilepath = DATA_DIR + stime.strftime('%Y/%m.%d/') 
+    outfilename = stime.strftime('%Y%m%d.%H%M.' + radar + '.fitlomb.hdf5') 
+    outfilepath = DATA_DIR + stime.strftime('%Y/%m.%d/') 
 
-        if not os.path.exists(outfilepath):
-            os.makedirs(outfilepath)
-        
-        hdf5file = h5py.File(outfilepath + outfilename, 'w')
+    if not os.path.exists(outfilepath):
+        os.makedirs(outfilepath)
+    
+    hdf5file = h5py.File(outfilepath + outfilename, 'w')
 
-        # set up frequency/alpha vectors 
-        amax = np.ceil((np.pi * 2 * MAX_TFREQ * MAX_W) / C)
-        fmax = np.ceil(MAX_V * 2 * MAX_TFREQ / C)
-        freqs = np.linspace(-fmax,fmax, NFREQS)
-        alfs = np.linspace(0, amax, NALFS)
-        
-        try: 
-            drec = sdio.radDataReadRec(myPtr)
+    # set up frequency/alpha vectors 
+    amax = np.ceil((np.pi * 2 * MAX_TFREQ * MAX_W) / C)
+    fmax = np.ceil(MAX_V * 2 * MAX_TFREQ / C)
+    freqs = np.linspace(-fmax,fmax, NFREQS)
+    alfs = np.linspace(0, amax, NALFS)
+    
+    try: 
+        drec = sdio.radDataReadRec(myPtr)
 
-        except:
-            print 'error reading first rawacf record for ' + str(stime) + '... skipping to next record block'
-            hdf5file.close() 
-            return 
-        
-        badlag_cache = None
-        gpu_lambda = None
-        if CALC_SIGMA:
-            gpu_sigma = None
-
-        while drec != None:
-            try:
-                fit = CULombFit(drec) # ~ 30% of the time is spent here
-            except None:
-                print 'error reading rawacf record, skipping'
-                continue
-            
-            # create velocity and spectral width space based on maximum transmit frequency
-            if gpu_lambda == None:
-                badlag_cache = lagstate.bad_lags(fit)
-                fit.SetBadlags(badlag_cache)
-
-                gpu_lambda = BayesGPU(fit.lags, freqs, alfs, fit.nrang, LAMBDA_FIT)
-                if CALC_SIGMA:
-                    gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
-
-            # generate new caches on the GPU for the fit if the pulse sequence has changed 
-            elif gpu_lambda.npulses != fit.nrang or (not np.array_equal(fit.lags, gpu_lambda.lags)):
-                badlag_cache = lagstate.bad_lags(fit)
-                fit.SetBadlags(badlag_cache)
-
-                gpu_lambda = BayesGPU(fit.lags, freqs, alfs, fit.nrang, LAMBDA_FIT)
-
-                if CALC_SIGMA:
-                    gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
-
-                print 'the pulse sequence has changed'
-
-            else:
-                fit.SetBadlags(badlag_cache)
-
-            try:
-                fit.CudaProcessPulse(gpu_lambda)
-                if CALC_SIGMA:
-                    fit.CudaProcessPulse(gpu_sigma)
-
-                fit.CudaCopyPeaks(gpu_lambda)
-                if CALC_SIGMA:
-                    fit.CudaCopyPeaks(gpu_sigma)
-                
-                if(LOMB_PASSES >= 1):
-                    for i in xrange(1, LOMB_PASSES):
-                        fit.CudaProcessPulse(gpu_lambda, copy_samples = False) 
-                        if CALC_SIGMA:
-                            fit.CudaProcessPulse(gpu_sigma, copy_samples = False) 
-
-                        fit.CudaCopyPeaks(gpu_lambda, i)
-                        if CALC_SIGMA:
-                            fit.CudaCopyPeaks(gpu_sigma, i)
-       
-                fit.WriteLSSFit(hdf5file) # 4 %
-                plt.plot(np.log10(fit.pwr0))
-                pdb.set_trace()
-                plt.show()
-                #fit.CudaPlotFit(gpu_lambda)
-	    except None:
-		print 'error fitting file, skipping record at ' + str(fit.recordtime) 
-
-            drec = sdio.radDataReadRec(myPtr) # ~ 10% of the time is spent here
-
+    except:
+        print 'error reading first rawacf record for ' + str(stime) + '... skipping to next record block'
         hdf5file.close() 
+        return 
+    
+    badlag_cache = None
+    gpu_lambda = None
+    if CALC_SIGMA:
+        gpu_sigma = None
+
+    while drec != None:
+        try:
+            fit = CULombFit(drec) # ~ 30% of the time is spent here
+        except None:
+            print 'error reading rawacf record, skipping'
+            continue
         
-        # remove tmp rawacf file
-        tmprawacf = glob.glob(etime.strftime('/tmp/sd/*.*.%Y%m%d.%H%M*.') + radar + '.rawacf')
-        if len(tmprawacf) == 1:
-            os.remove(tmprawacf[0])
+        # create velocity and spectral width space based on maximum transmit frequency
+        if gpu_lambda == None:
+            badlag_cache = lagstate.bad_lags(fit)
+            fit.SetBadlags(badlag_cache)
+
+            gpu_lambda = BayesGPU(fit.lags, freqs, alfs, fit.nrang, LAMBDA_FIT)
+            if CALC_SIGMA:
+                gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
+
+        # generate new caches on the GPU for the fit if the pulse sequence has changed 
+        elif gpu_lambda.npulses != fit.nrang or (not np.array_equal(fit.lags, gpu_lambda.lags)):
+            badlag_cache = lagstate.bad_lags(fit)
+            fit.SetBadlags(badlag_cache)
+
+            gpu_lambda = BayesGPU(fit.lags, freqs, alfs, fit.nrang, LAMBDA_FIT)
+
+            if CALC_SIGMA:
+                gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
+
+            print 'the pulse sequence has changed'
+
         else:
-            print 'error removing rawacf temp file'
+            fit.SetBadlags(badlag_cache)
+
+        try:
+            fit.CudaProcessPulse(gpu_lambda)
+            if CALC_SIGMA:
+                fit.CudaProcessPulse(gpu_sigma)
+
+            fit.CudaCopyPeaks(gpu_lambda)
+            if CALC_SIGMA:
+                fit.CudaCopyPeaks(gpu_sigma)
+            
+            if(LOMB_PASSES >= 1):
+                for i in xrange(1, LOMB_PASSES):
+                    fit.CudaProcessPulse(gpu_lambda, copy_samples = False) 
+                    if CALC_SIGMA:
+                        fit.CudaProcessPulse(gpu_sigma, copy_samples = False) 
+
+                    fit.CudaCopyPeaks(gpu_lambda, i)
+                    if CALC_SIGMA:
+                        fit.CudaCopyPeaks(gpu_sigma, i)
+   
+            fit.WriteLSSFit(hdf5file) # 4 %
+            #plt.plot(np.log10(fit.pwr0))
+            #plt.show()
+            #fit.CudaPlotFit(gpu_lambda)
+
+        except None:
+            print 'error fitting file, skipping record at ' + str(fit.recordtime) 
+
+        drec = sdio.radDataReadRec(myPtr) # ~ 10% of the time is spent here
+
+    hdf5file.close() 
+    
+    # remove tmp rawacf file
+    tmprawacf = glob.glob(etime.strftime('/tmp/sd/*.*.%Y%m%d.%H%M*.') + radar + '.rawacf')
+
+    if len(tmprawacf) == 1:
+        os.remove(tmprawacf[0])
+    else:
+        print 'error removing rawacf temp file'
 
 
 #@profile
@@ -612,7 +619,23 @@ def main():
     fitlomb_pool.join()
     print 'fitlomb workers finished...'
 
+def test_lags():
+    manager = Manager()
+    lock = manager.Lock()
+
+    stime = datetime.datetime(2014, 8, 27, 4, 0)
+    etime = datetime.datetime(2014, 8, 27, 4, 1)
+
+    radar = 'mcm.a'
+    record = ((stime, etime, radar, lock))
+    generate_fitlomb(record)
+
+    pdb.set_trace()
+
 if __name__ == '__main__':
-    main()
+    if LAGDEBUG:
+        test_lags()
+    else:
+        main()
 
 

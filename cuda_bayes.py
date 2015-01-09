@@ -529,7 +529,7 @@ def main():
         ts = 1./fs
 
         lags = np.arange(0, 24) * ts
-        signal=[]
+        signal = []
 
         maxpulses = 2
         tfreq = 30 
@@ -702,6 +702,7 @@ def main():
     plt.legend(['"moment" fit snr', 'peak fit snr'])
     plt.show()
     pdb.set_trace()
+
 if __name__ == '__main__':
     main()
 
