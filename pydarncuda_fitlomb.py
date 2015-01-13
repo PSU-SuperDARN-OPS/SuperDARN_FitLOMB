@@ -495,6 +495,7 @@ def generate_fitlomb(record):
                         fit.CudaCopyPeaks(gpu_sigma, i)
    
             fit.WriteLSSFit(hdf5file) # 4 %
+            #pdb.set_trace()
             #plt.plot(np.log10(fit.pwr0))
             #plt.show()
             #fit.CudaPlotFit(gpu_lambda)
@@ -525,7 +526,7 @@ def main():
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
     parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default=POOL_SIZE) 
     parser.add_argument("--passes", help="numper of lomb fit passes", default=LOMB_PASSES) 
-    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['mcm.a'])
+    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['mcm.a', 'sps.a', 'ade.a', 'kod.d', 'ade.a', 'ksr.a'])
     parser.add_argument("--datadir", help="base directory for .fitlomb files (defaults to /home/radar/fitlomb/)", default='/home/radar/fitlomb/') 
 
     args = parser.parse_args() 
@@ -586,8 +587,8 @@ def test_lags():
     manager = Manager()
     lock = manager.Lock()
 
-    stime = datetime.datetime(2014, 8, 27, 0, 0)
-    etime = datetime.datetime(2014, 8, 28, 0, 0)
+    stime = datetime.datetime(2014, 8, 27, 4, 0)
+    etime = datetime.datetime(2014, 8, 28, 4, 01)
 
     radar = 'mcm.a'
     record = ((stime, etime, radar, lock))

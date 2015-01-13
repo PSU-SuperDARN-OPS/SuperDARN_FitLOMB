@@ -560,7 +560,7 @@ def main():
 
     else: 
         import pickle
-        param = pickle.load(open('pulse_mcm20140828.p', 'rb'))
+        param = pickle.load(open('pulse_mcm2014082804.p', 'rb'))
         lags = param['lags']
         freqs = param['freqs']
         alfs = param['alfs']
@@ -617,7 +617,7 @@ def main():
     cuda.memcpy_dtoh(gpu.P_f, gpu.P_f_gpu)
     #pdb.set_trace()
     for gate in range(75):
-        if gate == 14:
+        if gate > 0:
             print gate
             print 'calculated amplitude: ' + str(gpu.amplitudes[gate]) 
             print 'calculated snr: ' + str(gpu.snr[gate]) 
@@ -633,11 +633,11 @@ def main():
             fprob = np.sum(p_f, axis=0)
             aprob = np.sum(p_f, axis=1)
 
-            print 'calculated freq: ' + str(gpu.vfreq[gate]) 
-            print 'mom freq: ' + str(sum(freqs * fprob))
+            #print 'calculated freq: ' + str(gpu.vfreq[gate]) 
+            #print 'mom freq: ' + str(sum(freqs * fprob))
 
-            print 'calculated decay: ' + str(gpu.walf[gate]) 
-            print 'mom alf: ' + str(sum(alfs * aprob))
+            #print 'calculated decay: ' + str(gpu.walf[gate]) 
+            #print 'mom alf: ' + str(sum(alfs * aprob))
 
             plt.imshow(p_f > max(p_f.flatten()) * .1, interpolation='none')
             plt.imshow(p_f, interpolation='none')
@@ -655,9 +655,9 @@ def main():
             c_mean = np.mean(c_samples)
             plt.plot(np.angle(fit), abs(fit))
             plt.plot(np.angle(c_samples), abs(c_samples))
-            plt.plot(np.angle(c_mean), abs(c_mean), size=4)
+            plt.plot(np.angle(c_mean), abs(c_mean)) 
             plt.show()
-            pdb.set_trace()
+            #pdb.set_trace()
             #plt.plot(lags, np.real(expected))
             #plt.plot(lags, np.imag(expected))
             
