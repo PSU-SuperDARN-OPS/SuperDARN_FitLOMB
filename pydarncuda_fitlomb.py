@@ -42,7 +42,6 @@ MAX_V = 2000 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 1500 # m/s, max spectral width to include in lomb 
 NFREQS = 128 
 NALFS = 128 
-MAXPULSES = 300
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
 SNR_THRESH = .10 # minimum ratio of power in fitted signal and residual for a qualtiy fit
@@ -50,11 +49,11 @@ VERR_THRESH = 70
 WERR_THRESH = 70 
 C = 3e8
 MAX_TFREQ = 16e6
-POOL_SIZE = 1 # maximum pool size for multiprocessing of fits..
+POOL_SIZE = 6 # maximum pool size for multiprocessing of fits..
 LOMB_PASSES = 1
 CALC_SIGMA = False 
-DEBUG = True
-LAGDEBUG = True
+DEBUG = False 
+LAGDEBUG = False 
 
 GROUP_ATTR_TYPES = {\
         'txpow':np.int16,\
@@ -388,41 +387,12 @@ class CULombFit:
     
     # calculate and store bad lags
     #@profile
-    def SetBadlags(self, bad_lags):
-        if not LAGDEBUG:
-            self.bad_lags = bad_lags
-        else:
-            self.bad_lags = lagstate.bad_lags_conv(self)
-
-        self.CalcNoise()
-        if not LAGDEBUG:
-            self.CalcBadlags()
-
-    def CalcBadlags(self, pwrthresh = False, uselagzero = True):
-        # get bad lags - power exceeds lag zero power
-        # "Spectral width of SuperDARN echos", Ponomarenko and Waters
-
+    def SetBadlags(self):
+        self.bad_lags = lagstate.get_bad_lags(self)
         for rgate in self.ranges:
-            if pwrthresh:
-                # .. this will only work if we have a good lag zero sample
-                # TODO: work on fall back
-                if not self.bad_lags[rgate][0]: 
-                    i_lags = self.acfi[rgate]
-                    q_lags = self.acfq[rgate]
-                    samples = i_lags + 1j * q_lags 
-                    
-                    lagpowers = abs(samples) ** 2
-
-                    self.bad_lags[rgate] += (lagpowers > (lagpowers[0] * 2.0))# add interference lags
-                else:
-                    pass
-                    # if lag zero is bad, we can't filter out lags greater than lag zero because we don't know what it is..
-
-            if not uselagzero:
-                self.bad_lags[rgate][0] = True
-                
             self.nlag[rgate,0] = len(self.bad_lags[rgate]) - sum(self.bad_lags[rgate])
 
+        self.CalcNoise()
 
 # create a COMPACT type h5py dataset using low level API...
 def add_compact_dset(hdf5file, group, dsetname, data, dtype, mask = []):
@@ -476,7 +446,7 @@ def generate_fitlomb(record):
         hdf5file.close() 
         return 
     
-    badlag_cache = None
+    #badlag_cache = None
     gpu_lambda = None
     if CALC_SIGMA:
         gpu_sigma = None
@@ -490,27 +460,20 @@ def generate_fitlomb(record):
         
         # create velocity and spectral width space based on maximum transmit frequency
         if gpu_lambda == None:
-            badlag_cache = lagstate.bad_lags(fit)
-            fit.SetBadlags(badlag_cache)
-
             gpu_lambda = BayesGPU(fit.lags, freqs, alfs, fit.nrang, LAMBDA_FIT)
             if CALC_SIGMA:
                 gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
 
         # generate new caches on the GPU for the fit if the pulse sequence has changed 
         elif gpu_lambda.npulses != fit.nrang or (not np.array_equal(fit.lags, gpu_lambda.lags)):
-            badlag_cache = lagstate.bad_lags(fit)
-            fit.SetBadlags(badlag_cache)
-
             gpu_lambda = BayesGPU(fit.lags, freqs, alfs, fit.nrang, LAMBDA_FIT)
 
             if CALC_SIGMA:
                 gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
 
             print 'the pulse sequence has changed'
-
-        else:
-            fit.SetBadlags(badlag_cache)
+        
+        fit.SetBadlags()
 
         try:
             fit.CudaProcessPulse(gpu_lambda)
@@ -623,14 +586,12 @@ def test_lags():
     manager = Manager()
     lock = manager.Lock()
 
-    stime = datetime.datetime(2014, 8, 27, 4, 0)
-    etime = datetime.datetime(2014, 8, 27, 4, 1)
+    stime = datetime.datetime(2014, 8, 27, 0, 0)
+    etime = datetime.datetime(2014, 8, 28, 0, 0)
 
     radar = 'mcm.a'
     record = ((stime, etime, radar, lock))
     generate_fitlomb(record)
-
-    pdb.set_trace()
 
 if __name__ == '__main__':
     if LAGDEBUG:

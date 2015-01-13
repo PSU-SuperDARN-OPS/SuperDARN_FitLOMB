@@ -337,7 +337,7 @@ if __name__ == '__main__':
     parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.08.28.00")
     parser.add_argument("--maxplotlen", help="maximum length of a rti plot, in hours", default = 24)
     parser.add_argument("--radar", help="radar to create data from", default='mcm.a')
-    parser.add_argument("--beam", help="beam to plot", default=0)
+    parser.add_argument("--beam", help="beam to plot", default=9)
     parser.add_argument("--plotdir", help="directory to place plots (defaults to ./plots/)", default=PLOTDIR)
     parser.add_argument("--nametag", help="extra string to attach to file names (defaults to none)", default='') # TODO..
     args = parser.parse_args()

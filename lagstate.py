@@ -1,70 +1,12 @@
 import numpy as np
 import pdb
 
-TXPULSE = -1
+OVERLAP_THRESH = .20
 
 # TODO: handle case with lag 0 - if lag 0 is bad, use alternate lag zero (if it exists..)
 # (regenerate behavior for rawacf...)
-#@profile
-def good_lags(prm):
-# Transmit samples
-  ptimes_usec=[]
-  psamples=[]
-  smpoff=prm.lagfr/prm.smsep
-  for pulse in prm.ptab:
-       t1 = pulse * prm.mpinc-prm.txpl/2.
-       t2 = t1 + 3 * prm.txpl/2. + 100 
-       ptimes_usec.append([t1,t2])
-       psamples.append([int(t1/prm.smsep),int(t2/prm.smsep)])
 
-  good_lags=[]
-  for rbin in xrange(prm.nrang): 
-       lag_state=[]
-       for l in xrange(prm.mplgs): # TODO: fix this, use alternate lag 0 if first is bad
-            lag = prm.ltab[l]
-            sam1 = lag[0]*(prm.mpinc/prm.smsep) + rbin +smpoff
-            sam2 = lag[1]*(prm.mpinc/prm.smsep) + rbin +smpoff
-            
-
-            good=True
-            for smrange in psamples:
-              if (sam1 >= smrange[0]) and (sam1 <= smrange[1]): 
-                  good=False 
-              if (sam2 >= smrange[0]) and (sam2 <= smrange[1]): 
-                  good=False
-            lag_state.append(good)
-       good_lags.append(lag_state)
-# Range overlap
-  range_overlap=[]
-  for ck_pulse in xrange(prm.mppul):
-    overlap=[]
-    for pulse in xrange(prm.mppul):
-      diff_pulse = prm.ptab[ck_pulse] - prm.ptab[pulse]
-      overlap.append(diff_pulse * prm.mpinc/prm.smsep)
-    range_overlap.append(overlap)
-
-  for rbin in xrange(prm.nrang):
-    bad_pulse=[]
-    for pulse in xrange(prm.mppul):
-      bad_pulse.append(0)
-    for ck_pulse in xrange(prm.mppul):
-      for pulse in xrange(prm.mppul):
-        ck_range = range_overlap[ck_pulse][pulse] + rbin
-        if ((pulse != ck_pulse) and (0 <= ck_range) and (ck_range < prm.nrang)):
-          #pwr_ratio = 1  #pwr_ratio = (long) (nave * MIN_PWR_RATIO)
-          #min_pwr =  pwr_ratio * pwr0[rbin]
-          #if(min_pwr < pwr0[ck_range]):
-          #  pdb.set_trace()
-          bad_pulse[ck_pulse]==1  
-  # mark the bad lags 
-    for pulse in xrange(prm.mppul):
-      if (bad_pulse[pulse] == 1): 
-        for lag in xrange(prm.mplgs):
-          for i in xrange(2):
-            if (prm.ltab[lag][i] == prm.ptab[pulse]):
-              good_lags[rbin][lag]=False
-  return np.array(good_lags,dtype="bool")
-
+# mask out lags-ranges at transmit pulses
 def good_lags_txsamples(prm):
   # Transmit samples
   ptimes_usec=[]
@@ -97,83 +39,66 @@ def good_lags_txsamples(prm):
    
   return np.array(good_lags,dtype="bool")
 
+# mask out lag-ranges that overlap with other pulses
 def good_lags_overlap(prm):
-  good_lags=[]
-  # Range overlap
-  range_overlap=[]
-  for ck_pulse in xrange(prm.mppul):
-    overlap=[]
-    for pulse in xrange(prm.mppul):
-      diff_pulse = prm.ptab[ck_pulse] - prm.ptab[pulse]
-      overlap.append(diff_pulse * prm.mpinc/prm.smsep)
-    range_overlap.append(overlap)
-
-  for rbin in xrange(prm.nrang):
-    bad_pulse=[]
-    for pulse in xrange(prm.mppul):
-      bad_pulse.append(0)
-    for ck_pulse in xrange(prm.mppul):
-      for pulse in xrange(prm.mppul):
-        ck_range = range_overlap[ck_pulse][pulse] + rbin
-        if ((pulse != ck_pulse) and (0 <= ck_range) and (ck_range < prm.nrang)):
-          #pwr_ratio = 1  #pwr_ratio = (long) (nave * MIN_PWR_RATIO)
-          #min_pwr =  pwr_ratio * pwr0[rbin]
-          #if(min_pwr < pwr0[ck_range]):
-          #  import pdb
-          #  pdb.set_trace()
-          bad_pulse[ck_pulse]==1  
-  # mark the bad lags 
-    for pulse in xrange(prm.mppul):
-      if (bad_pulse[pulse] == 1): 
-        for lag in xrange(prm.mplgs):
-          for i in xrange(2):
-            if (prm.ltab[lag][i] == prm.ptab[pulse]):
-              good_lags[rbin][lag]=False
- 
-  # create pulse pairs that correspond to each 
+  from pylab import * # for testing..
   good_lags = np.zeros([prm.nrang, prm.mplgs])
-  firstrange = prm.lagfr / prm.smsep # range gate of first range
-    
-  # create time vector for entire pulse sequence
-  s_t = np.arange(prm.lagfr, prm.ptab[-1] * prm.mpinc + prm.nrang * prm.smsep + prm.smsep, prm.smsep)
+  sampfr = prm.lagfr / prm.smsep # range gate of first range in lag0
+
+  # calculate number of range-samples in the pulse sequence 
+  nsamples = prm.ptab[-1] * (prm.mpinc / prm.smsep) + prm.nrang + sampfr
+  pulse_returns = []
   
-  # iterate over each time, fill with ranges/lags/pwr0 tuples
-  # also, -1 if tx pulse?
-  import heapq 
+  # convolve pulse impulses with pwr0 to estimate of pulse returns
+  # this is inefficient, maybe just pad pulse sequence.. 
+  for pulse in prm.ptab:
+      pulse_impulse = np.zeros(nsamples)
+      t_pulse = pulse * (prm.mpinc / prm.smsep) + sampfr
+      pulse_impulse[t_pulse] = 1
+      pulse_returns.append(np.convolve(pulse_impulse, prm.pwr0))
+    
+  combined_return = np.zeros(nsamples + prm.nrang - 1)
+  
+  # estimate combined power from all pulses using pwr0
+  for pulse in pulse_returns:
+      combined_return += pulse
+  
+  # create mask of good samples from each pulse return where 
+  # sample power comes from that sample by a ratio of at least OVERLAP_THRESH 
+  for (i,pulse) in enumerate(pulse_returns):
+      #plot(pulse_returns[i])
+      #plot(combined_return)
+      #plot(700000 * ((pulse / combined_return) > OVERLAP_THRESH))
+      #show()
 
-  # create a list of heaps?
-  for t in s_t:
-      rangeheap = []
-       
-      for (i,p) in enumerate(xrange(prm.mplgs)):
-          rangeheap.append([])
+      pulse_returns[i] = (pulse / combined_return) > OVERLAP_THRESH
 
-          
+  # shift per-pulse return masks to overlap match range gates
+  for (i,pulse) in enumerate(pulse_returns):
+      startidx = prm.ptab[i] * (prm.mpinc / prm.smsep) + sampfr
+      endidx = startidx + prm.nrang
+      pulse_returns[i] = pulse[startidx:endidx]
 
+  # reformat lag table to index pulse return mask list
+  tab_lookup = {}
+  lag_pairs = []
+  for (i,p) in enumerate(prm.ptab):
+      tab_lookup[p] = i
 
-  for i,rng in enumerate(xrange(prm.nrang)):
-    for j,lag in enumerate(xrange(prm.mplgs)):
-      good_lags[i,j] = 0
-        
-      # so, if this lag at this range corresponds with a high power return from another range, it is bad
-      # what am I actually doing?
-      # for each sample time until mppul - 
-      #     determine which pulses have gone 
-      #     
-      #     determine which ranges would have scatter
-      #     flag lesser ranges as bad
+  for pair in prm.ltab:
+      lag_pairs.append([tab_lookup[pair[0]],tab_lookup[pair[1]]])
 
-      for p in xrange(prm.mppul):
-          for px in xrange(prm.mppul):
-            pass
-              # if the 
+  # create bad lags mask using lag table and per-pulse range gate masks
+  for (j,pair) in enumerate(lag_pairs):
+      p1ranges = pulse_returns[pair[0]] 
+      p2ranges = pulse_returns[pair[1]]
+      good_lags[:,j] = p1ranges & p2ranges 
 
-  return np.array(good_lags,dtype="bool")
+#  imshow(good_lags)
+#  show()
+  return np.array(good_lags, dtype="bool")
 
-def bad_lags_conv(prm):
+def get_bad_lags(prm):
     txlags = good_lags_txsamples(prm)
     overlap_lags = good_lags_overlap(prm) 
-    return txlags & overlap_lags
-
-def bad_lags(prm):
-  return ~good_lags(prm)
+    return ~txlags | ~overlap_lags
