@@ -53,7 +53,7 @@ POOL_SIZE = 6 # maximum pool size for multiprocessing of fits..
 LOMB_PASSES = 1
 CALC_SIGMA = False 
 DEBUG = False 
-LAGDEBUG = True
+LAGDEBUG = True 
 
 GROUP_ATTR_TYPES = {\
         'txpow':np.int16,\
@@ -390,9 +390,7 @@ class CULombFit:
     #@profile
     def SetBadlags(self, txlag_cache = None):
         self.bad_lags = lagstate.get_bad_lags(self, txlags = txlag_cache)
-        for rgate in self.ranges:
-            self.nlag[rgate,0] = len(self.bad_lags[rgate]) - sum(self.bad_lags[rgate])
-
+        self.nlag[:,0] = self.mplgs - sum(self.bad_lags.T)
         self.CalcNoise()
 
 # create a COMPACT type h5py dataset using low level API...
@@ -527,7 +525,7 @@ def main():
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
     parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default=POOL_SIZE) 
     parser.add_argument("--passes", help="numper of lomb fit passes", default=LOMB_PASSES) 
-    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['mcm.a', 'sps.a', 'ade.a', 'kod.d', 'ade.a', 'ksr.a'])
+    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['mcm.a'])#, 'sps.a', 'ade.a', 'kod.d', 'ade.a', 'ksr.a'])
     parser.add_argument("--datadir", help="base directory for .fitlomb files (defaults to /home/radar/fitlomb/)", default='/home/radar/fitlomb/') 
 
     args = parser.parse_args() 
