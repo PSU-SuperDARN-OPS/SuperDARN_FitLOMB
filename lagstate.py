@@ -7,6 +7,7 @@ OVERLAP_THRESH = .20
 # (regenerate behavior for rawacf...)
 
 # mask out lags-ranges at transmit pulses
+#@profile
 def good_lags_txsamples(prm):
   # Transmit samples
   ptimes_usec=[]
@@ -39,9 +40,10 @@ def good_lags_txsamples(prm):
    
   return np.array(good_lags,dtype="bool")
 
+
 # mask out lag-ranges that overlap with other pulses
-def good_lags_overlap(prm):
-  from pylab import * # for testing..
+#@profile
+def good_lags_overlap(prm, nolagzero = False):
   good_lags = np.zeros([prm.nrang, prm.mplgs])
   sampfr = prm.lagfr / prm.smsep # range gate of first range in lag0
 
@@ -65,16 +67,9 @@ def good_lags_overlap(prm):
   
   # create mask of good samples from each pulse return where 
   # sample power comes from that sample by a ratio of at least OVERLAP_THRESH 
-  for (i,pulse) in enumerate(pulse_returns):
-      #plot(pulse_returns[i])
-      #plot(combined_return)
-      #plot(700000 * ((pulse / combined_return) > OVERLAP_THRESH))
-      #show()
-
-      pulse_returns[i] = (pulse / combined_return) > OVERLAP_THRESH
-
   # shift per-pulse return masks to overlap match range gates
   for (i,pulse) in enumerate(pulse_returns):
+      pulse = (pulse / combined_return) > OVERLAP_THRESH
       startidx = prm.ptab[i] * (prm.mpinc / prm.smsep) + sampfr
       endidx = startidx + prm.nrang
       pulse_returns[i] = pulse[startidx:endidx]
@@ -84,7 +79,6 @@ def good_lags_overlap(prm):
   lag_pairs = []
   for (i,p) in enumerate(prm.ptab):
       tab_lookup[p] = i
-
   for pair in prm.ltab:
       lag_pairs.append([tab_lookup[pair[0]],tab_lookup[pair[1]]])
 
@@ -93,12 +87,15 @@ def good_lags_overlap(prm):
       p1ranges = pulse_returns[pair[0]] 
       p2ranges = pulse_returns[pair[1]]
       good_lags[:,j] = p1ranges & p2ranges 
-
-#  imshow(good_lags)
-#  show()
+ 
+  if nolagzero:
+      good_lags[:,0] = 0
+  
   return np.array(good_lags, dtype="bool")
 
-def get_bad_lags(prm):
-    txlags = good_lags_txsamples(prm)
+#@profile
+def get_bad_lags(prm, txlags = None):
+    if txlags == None:
+        txlags = good_lags_txsamples(prm)
     overlap_lags = good_lags_overlap(prm) 
     return ~txlags | ~overlap_lags

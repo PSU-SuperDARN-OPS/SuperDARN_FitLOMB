@@ -84,6 +84,9 @@ def getParam(lombfit, beam, param, starttime, endtime,  maskparam = False, blank
     rgates = [p.attrs['nrang'] for p in pulses] 
     ranges = [np.arange(p.attrs['nrang']) * p.attrs['rsep'] + p.attrs['frang'] for p in pulses]
     # powers is long max(ranges) in case the number of range gates changes over the file
+    if not times:
+        return times, ranges, []
+
     rtiparam = np.ones([len(times), max(rgates), MAX_LOMBDEPTH])
     
     for (t,pulse) in enumerate(pulses):
@@ -321,11 +324,9 @@ def PlotTime(radar, starttime, endtime, directory, beams):
     Plot_w_l(lombfit, beams, starttime, endtime, image = True)
     Plot_v(lombfit, beams, starttime, endtime, image = True)
 
-
     plot_vector(lombfit, beams, 'v_e' , '', starttime, endtime, vmax = 200, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
     plot_vector(lombfit, beams, 'w_l_e' , '', starttime, endtime, vmax = 200, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
     plot_vector(lombfit, beams, 'nlag' , '', starttime, endtime, vmax = 23, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
-    #plot_vector(lombfit, beams, 'r2_phase_l' , '', starttime, endtime, vmax = 1, vmin = -1, cmap = plt.cm.get_cmap("SD_V"), image=True)
     lombfit.close()
 
 if __name__ == '__main__':
@@ -336,7 +337,7 @@ if __name__ == '__main__':
     parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.08.27.00")
     parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.08.28.00")
     parser.add_argument("--maxplotlen", help="maximum length of a rti plot, in hours", default = 24)
-    parser.add_argument("--radar", help="radar to create data from", default=['mcm.a', 'kod.c', 'ksr.a', 'ade.a', 'adw.a', 'sps.a'])
+    parser.add_argument("--radar", help="radar to create data from", default=['mcm.a'])
     parser.add_argument("--beam", help="beam to plot", default=9)
     parser.add_argument("--plotdir", help="directory to place plots (defaults to ./plots/)", default=PLOTDIR)
     parser.add_argument("--nametag", help="extra string to attach to file names (defaults to none)", default='') # TODO..
@@ -359,7 +360,7 @@ if __name__ == '__main__':
 
         starttime = plot_times[starttime]
     
-    for radar in [args.radar]:
+    for radar in args.radar:
         for stime in plot_times.keys():
             timespan = (stime - plot_times[stime])
             TIMEINT = -min(int((timespan.days * 24 * 60 + timespan.seconds / 60.) / 12.),-1)
@@ -368,5 +369,5 @@ if __name__ == '__main__':
                 RADAR = radar
                 try:
                     PlotTime(RADAR, stime, plot_times[stime], DATADIR, [beam]) 
-                except None:
+                except:
                     print 'error plotting ' + str(stime) + '... skipping'

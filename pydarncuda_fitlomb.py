@@ -29,7 +29,7 @@ from multiprocessing import Pool, Manager
 from bigdipper import cache_data, mount_raid0
 
 FITLOMB_REVISION_MAJOR = 3
-FITLOMB_REVISION_MINOR = 1
+FITLOMB_REVISION_MINOR = 3
 ORIGIN_CODE = 'pydarncuda_fitlomb.py'
 DATA_DIR = '/home/' + getpass.getuser() + '/fitlomb/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
@@ -53,7 +53,7 @@ POOL_SIZE = 6 # maximum pool size for multiprocessing of fits..
 LOMB_PASSES = 1
 CALC_SIGMA = False 
 DEBUG = False 
-LAGDEBUG = False 
+LAGDEBUG = True
 
 GROUP_ATTR_TYPES = {\
         'txpow':np.int16,\
@@ -233,7 +233,6 @@ class CULombFit:
         add_compact_dset(hdf5file, groupname, 'v_l_std', np.float64(self.v_l_std), h5py.h5t.NATIVE_DOUBLE)
         add_compact_dset(hdf5file, groupname, 'fit_snr_l', np.float64(self.fit_snr_l), h5py.h5t.NATIVE_DOUBLE)
         add_compact_dset(hdf5file, groupname, 'fit_snr_l_peak', np.float64(self.fit_snr_l), h5py.h5t.NATIVE_DOUBLE)
-        #add_compact_dset(hdf5file, groupname, 'r2_phase_l', np.float64(self.r2_phase_l), h5py.h5t.NATIVE_DOUBLE)
 
         if CALC_SIGMA:
             add_compact_dset(hdf5file, groupname, 'p_s', np.float64(self.p_s), h5py.h5t.NATIVE_DOUBLE)
@@ -245,7 +244,7 @@ class CULombFit:
             add_compact_dset(hdf5file, groupname, 'v_s_e', np.float64(self.v_s_e), h5py.h5t.NATIVE_DOUBLE)
             add_compact_dset(hdf5file, groupname, 'v_s_std', np.float64(self.v_s_std), h5py.h5t.NATIVE_DOUBLE)
             add_compact_dset(hdf5file, groupname, 'fit_snr_s', np.float64(self.fit_snr_s), h5py.h5t.NATIVE_DOUBLE)
-            #add_compact_dset(hdf5file, groupname, 'r2_phase_s', np.float64(self.r2_phase_s), h5py.h5t.NATIVE_DOUBLE)
+    
     #@profile 
     def CudaProcessPulse(self, gpu, copy_samples = True):
         lagsmask = []
@@ -293,7 +292,6 @@ class CULombFit:
         self.lags = np.float32(np.array(map(lambda x : abs(x[1]-x[0]), self.ltab[0:self.mplgs])) * (self.mpinc / 1e6))
 
     def CudaCopyPeaks(self, gpu, itr = 0):
-
         if gpu.env_model == LAMBDA_FIT:
 
             self.w_l[:,itr] = gpu.w 
@@ -347,8 +345,11 @@ class CULombFit:
             print 'calculated amplitude: ' + str(gpu.amplitudes[gate])
             print 'calculated freq: ' + str(gpu.vfreq[gate])
             print 'calculated decay: ' + str(gpu.walf[gate])
-            print 'snr: ' + str(gpu.snr[gate])
-
+            print 'fit snr: ' + str(gpu.snr[gate])
+            print 'fit p_l: ' + str(gpu.p[gate])
+            print 'v_e: ' + str(gpu.v_e[gate])
+            print 'w_e: ' + str(gpu.w_e[gate])
+            print 'qflg: ' + str(self.qflg[gate])
             fit = gpu.amplitudes[gate] * np.exp(1j * 2 * np.pi * gpu.vfreq[gate] * gpu.lags) * np.exp(-gpu.walf[gate] * gpu.lags)
             plt.plot(np.real(fit), '-')
             plt.plot(np.imag(fit), '-')
@@ -387,8 +388,8 @@ class CULombFit:
     
     # calculate and store bad lags
     #@profile
-    def SetBadlags(self):
-        self.bad_lags = lagstate.get_bad_lags(self)
+    def SetBadlags(self, txlag_cache = None):
+        self.bad_lags = lagstate.get_bad_lags(self, txlags = txlag_cache)
         for rgate in self.ranges:
             self.nlag[rgate,0] = len(self.bad_lags[rgate]) - sum(self.bad_lags[rgate])
 
@@ -446,7 +447,7 @@ def generate_fitlomb(record):
         hdf5file.close() 
         return 
     
-    #badlag_cache = None
+    txlag_cache = None
     gpu_lambda = None
     if CALC_SIGMA:
         gpu_sigma = None
@@ -463,6 +464,7 @@ def generate_fitlomb(record):
             gpu_lambda = BayesGPU(fit.lags, freqs, alfs, fit.nrang, LAMBDA_FIT)
             if CALC_SIGMA:
                 gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
+            txlag_cache = lagstate.good_lags_txsamples(fit)
 
         # generate new caches on the GPU for the fit if the pulse sequence has changed 
         elif gpu_lambda.npulses != fit.nrang or (not np.array_equal(fit.lags, gpu_lambda.lags)):
@@ -471,9 +473,10 @@ def generate_fitlomb(record):
             if CALC_SIGMA:
                 gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
 
+            txlag_cache = lagstate.good_lags_txsamples(fit)
             print 'the pulse sequence has changed'
         
-        fit.SetBadlags()
+        fit.SetBadlags(txlag_cache = txlag_cache)
 
         try:
             fit.CudaProcessPulse(gpu_lambda)
@@ -496,8 +499,6 @@ def generate_fitlomb(record):
    
             fit.WriteLSSFit(hdf5file) # 4 %
             #pdb.set_trace()
-            #plt.plot(np.log10(fit.pwr0))
-            #plt.show()
             #fit.CudaPlotFit(gpu_lambda)
 
         except None:
@@ -588,7 +589,7 @@ def test_lags():
     lock = manager.Lock()
 
     stime = datetime.datetime(2014, 8, 27, 4, 0)
-    etime = datetime.datetime(2014, 8, 28, 4, 01)
+    etime = datetime.datetime(2014, 8, 27, 6, 01)
 
     radar = 'mcm.a'
     record = ((stime, etime, radar, lock))
