@@ -10,12 +10,14 @@ import os, sys, getpass
 
 from dateutil.relativedelta import relativedelta
 
-SSHTIMEOUT = 0 # bigdipper may take a while..
+ARCHIVE_COMP = 'bigdipper.arsc.edu' 
+ARCHIVE_USER = 'jtklein'
+CHINIAK_USER = 'jtklein'
+
+SSHTIMEOUT = 0 # bigdipper may take a while.. 0 is no timeout
 USER = getpass.getuser()
 ARCHIVE_DIR = '/sam-qfs/SUPERDARN/mirror/sddata/rawacf/' 
 CACHE_DIR = '/home/' + USER + '/raid0/SuperDARN/data/rawacf/'
-ARCHIVE_COMP = 'bigdipper.arsc.edu' 
-ARCHIVE_USER = 'jtklein'
 RSYNC_PATH = '--rsync-path=/usr/local/bin/rsync'
 STAGE_CMD = 'bash ~/sd_archive_tools/stage_rawacfs.bash'
 LOCAL_FITLOMB_DIR = '/home/' + USER + '/fitlomb/'
@@ -98,7 +100,7 @@ def mount_raid0():
     # if not, mount using sshfs
     if not os.path.exists('/home/' + USER + '/raid0/SuperDARN'):
         print 'mounting qnap raid...'
-        cmdlist = ['sshfs', 'jtklein@chiniak:/raid0', '/home/' + USER + '/raid0']
+        cmdlist = ['sshfs', CHINIAK_USER + '@chiniak:/raid0', '/home/' + USER + '/raid0']
         print ' '.join(cmdlist)
         s = subprocess.Popen(cmdlist, stdout = subprocess.PIPE, stderr = subprocess.PIPE)
         out, err = s.communicate()

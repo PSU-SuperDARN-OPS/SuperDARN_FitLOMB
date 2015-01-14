@@ -337,7 +337,7 @@ if __name__ == '__main__':
     parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.08.27.00")
     parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.08.28.00")
     parser.add_argument("--maxplotlen", help="maximum length of a rti plot, in hours", default = 24)
-    parser.add_argument("--radar", help="radar to create data from", default=['mcm.a'])
+    parser.add_argument("--radars", help="radar to create data from", default=['mcm.a'])
     parser.add_argument("--beam", help="beam to plot", default=9)
     parser.add_argument("--plotdir", help="directory to place plots (defaults to ./plots/)", default=PLOTDIR)
     parser.add_argument("--nametag", help="extra string to attach to file names (defaults to none)", default='') # TODO..
@@ -360,7 +360,7 @@ if __name__ == '__main__':
 
         starttime = plot_times[starttime]
     
-    for radar in args.radar:
+    for radar in args.radars:
         for stime in plot_times.keys():
             timespan = (stime - plot_times[stime])
             TIMEINT = -min(int((timespan.days * 24 * 60 + timespan.seconds / 60.) / 12.),-1)

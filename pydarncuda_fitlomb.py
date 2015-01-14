@@ -40,8 +40,6 @@ Q_OFFSET = 1
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 2000 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 1500 # m/s, max spectral width to include in lomb 
-NFREQS = 128 
-NALFS = NFREQS 
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
 SNR_THRESH = .10 # minimum ratio of power in fitted signal and residual for a qualtiy fit
@@ -50,6 +48,9 @@ WERR_THRESH = 70
 C = 3e8
 MAX_TFREQ = 16e6
 LOMB_PASSES = 1
+NFREQS = 128 
+NALFS = 128 
+
 CALC_SIGMA = False 
 DEBUG = False 
 LAGDEBUG = False 
@@ -530,7 +531,7 @@ def main():
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
     parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default='auto') 
     parser.add_argument("--passes", help="numper of lomb fit passes", default=LOMB_PASSES) 
-    parser.add_argument("--resolution", help="size of velocity/spectral width matrix for fits" default=NFREQS) 
+    parser.add_argument("--resolution", help="size of velocity/spectral width matrix for fits", default=None) 
     parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['kod.d', 'ksr.a', 'ade.a', 'cvw', 'pgr', 'kod.d'])
     parser.add_argument("--datadir", help="base directory for .fitlomb files (defaults to /home/radar/fitlomb/)", default='/home/radar/fitlomb/') 
     parser.add_argument("--overwrite", help="overwrite existing .fitlomb files", action='store_true', default='False') 
@@ -540,9 +541,11 @@ def main():
     # TODO: these probably shouldn't be global variables..
     CALC_SIGMA = args.enable_sigmafit
     DATA_DIR = args.datadir
-    NFREQS = args.resolution
-    NALFS = NFREQS 
     OVERWRITE = args.overwrite
+
+    if args.resolution != None:
+        NFREQS = int(args.resolution)
+        NALFS = int(args.resolution)
 
     # mount raid0 via sshfs on chiniak... (to get write access)
     mount_raid0()
