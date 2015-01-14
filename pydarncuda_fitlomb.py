@@ -25,7 +25,7 @@ import os
 import getpass
 import glob
 import matplotlib.pyplot as plt
-from multiprocessing import Pool, Manager 
+from multiprocessing import Pool, Manager , cpu_count
 from bigdipper import cache_data, mount_raid0
 
 FITLOMB_REVISION_MAJOR = 3
@@ -41,7 +41,7 @@ FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 2000 # m/s, max velocity (doppler shift) to include in lomb
 MAX_W = 1500 # m/s, max spectral width to include in lomb 
 NFREQS = 128 
-NALFS = 128 
+NALFS = NFREQS 
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
 SNR_THRESH = .10 # minimum ratio of power in fitted signal and residual for a qualtiy fit
@@ -49,11 +49,11 @@ VERR_THRESH = 70
 WERR_THRESH = 70 
 C = 3e8
 MAX_TFREQ = 16e6
-POOL_SIZE = 6 # maximum pool size for multiprocessing of fits..
 LOMB_PASSES = 1
 CALC_SIGMA = False 
 DEBUG = False 
-LAGDEBUG = True 
+LAGDEBUG = False 
+OVERWRITE = False
 
 GROUP_ATTR_TYPES = {\
         'txpow':np.int16,\
@@ -418,10 +418,6 @@ def generate_fitlomb(record):
     stime, etime, radar, lock = record
 
     print 'worker computing from ' + str(stime) + ' to ' + str(etime)
-    # lock so multiple processes don't step over eachother unpacking and copying rawacfs to /tmp 
-    lock.acquire()
-    myPtr = sdio.radDataOpen(stime,radar,eTime=etime,channel=None,bmnum=None,cp=None,fileType='rawacf',filtered=False, src='local')
-    lock.release()
 
     outfilename = stime.strftime('%Y%m%d.%H%M.' + radar + '.fitlomb.hdf5') 
     outfilepath = DATA_DIR + stime.strftime('%Y/%m.%d/') 
@@ -429,7 +425,16 @@ def generate_fitlomb(record):
     if not os.path.exists(outfilepath):
         os.makedirs(outfilepath)
     
+    if not OVERWRITE and os.path.exists(outfilepath + outfilename):
+        print outfilename + ' already exists, skipping... (ovewrite files with --overwrite)'
+        return
+
     hdf5file = h5py.File(outfilepath + outfilename, 'w')
+
+    # open records, lock so multiple processes don't step over eachother unpacking and copying rawacfs to /tmp 
+    lock.acquire()
+    myPtr = sdio.radDataOpen(stime,radar,eTime=etime,channel=None,bmnum=None,cp=None,fileType='rawacf',filtered=False, src='local')
+    lock.release()
 
     # set up frequency/alpha vectors 
     amax = np.ceil((np.pi * 2 * MAX_TFREQ * MAX_W) / C)
@@ -519,34 +524,45 @@ def generate_fitlomb(record):
 def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
-    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.08.27.0000")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.08.28.0000")
+    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.02.06.0000")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.03.07.0000")
     parser.add_argument("--enable_sigmafit", help="enable fitting sigma (p_s/v_s) parameters. this will double runtime and GPU VRAM usage", action='store_true', default=False) 
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
-    parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default=POOL_SIZE) 
+    parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default='auto') 
     parser.add_argument("--passes", help="numper of lomb fit passes", default=LOMB_PASSES) 
-    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['mcm.a'])#, 'sps.a', 'ade.a', 'kod.d', 'ade.a', 'ksr.a'])
+    parser.add_argument("--resolution", help="size of velocity/spectral width matrix for fits" default=NFREQS) 
+    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['kod.d', 'ksr.a', 'ade.a', 'cvw', 'pgr', 'kod.d'])
     parser.add_argument("--datadir", help="base directory for .fitlomb files (defaults to /home/radar/fitlomb/)", default='/home/radar/fitlomb/') 
+    parser.add_argument("--overwrite", help="overwrite existing .fitlomb files", action='store_true', default='False') 
 
     args = parser.parse_args() 
     
     # TODO: these probably shouldn't be global variables..
     CALC_SIGMA = args.enable_sigmafit
     DATA_DIR = args.datadir
-    
+    NFREQS = args.resolution
+    NALFS = NFREQS 
+    OVERWRITE = args.overwrite
+
     # mount raid0 via sshfs on chiniak... (to get write access)
-    #mount_raid0()
+    mount_raid0()
 
     # parse date string and convert to datetime object
     starttime = datetime.datetime(*time.strptime(args.starttime, "%Y.%m.%d.%H%M")[:7])
     endtime = datetime.datetime(*time.strptime(args.endtime, "%Y.%m.%d.%H%M")[:7])
+
+    # set multiprocessing pool size (default to number of cores)
+    if args.poolsize == 'auto':
+        poolsize = cpu_count()
+    else:
+        poolsize = int(args.poolsize)
 
     # sanity check arguements
     if args.recordlen > 24 or args.recordlen <= 0:
         print 'recordlen arguement must be greater than 0 hours and less than or equal to 24 hours'
         return
     if starttime > endtime:
-        print 'start time is after end time..'
+        print 'error: start time is after end time..'
         return
     
     # compile list of start time/end time/radar/lock tuples 
@@ -570,7 +586,7 @@ def main():
     # so, two workers on kodiak-devel
     # an i7 with a gtx970 could handle.. at least eight 
     print 'starting fitlomb worker pool'
-    fitlomb_pool = Pool(processes = args.poolsize)
+    fitlomb_pool = Pool(processes = poolsize)
 
     for record in records:
         if not DEBUG:
