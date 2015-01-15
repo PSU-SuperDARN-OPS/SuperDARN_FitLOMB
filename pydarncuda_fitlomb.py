@@ -29,7 +29,7 @@ from multiprocessing import Pool, Manager , cpu_count
 from bigdipper import cache_data, mount_raid0
 
 FITLOMB_REVISION_MAJOR = 3
-FITLOMB_REVISION_MINOR = 3
+FITLOMB_REVISION_MINOR = 4
 ORIGIN_CODE = 'pydarncuda_fitlomb.py'
 DATA_DIR = '/home/' + getpass.getuser() + '/fitlomb/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
@@ -203,6 +203,10 @@ class CULombFit:
         grp.attrs['readme'] = FITLOMB_README
         grp.attrs['fitlomb.revision.major'] = np.int8(FITLOMB_REVISION_MAJOR)
         grp.attrs['fitlomb.revision.minor'] = np.int8(FITLOMB_REVISION_MINOR)
+
+        grp.attrs['bayes.vres'] = np.int16(NFREQS)
+        grp.attrs['bayes.wres'] = np.int16(NALFS)
+
         grp.attrs['fitlomb.bayes.iterations'] = np.int16(self.maxfreqs)
         grp.attrs['origin.code'] = ORIGIN_CODE # TODO: ADD ARGUEMENTS
         grp.attrs['origin.time'] = str(datetime.datetime.now())
@@ -525,14 +529,14 @@ def generate_fitlomb(record):
 def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
-    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.02.06.0000")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.03.07.0000")
+    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.03.01.0000")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.04.01.0000")
     parser.add_argument("--enable_sigmafit", help="enable fitting sigma (p_s/v_s) parameters. this will double runtime and GPU VRAM usage", action='store_true', default=False) 
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
     parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default='auto') 
-    parser.add_argument("--passes", help="numper of lomb fit passes", default=LOMB_PASSES) 
+    parser.add_argument("--passes", help="number of lomb fit passes", default=LOMB_PASSES) 
     parser.add_argument("--resolution", help="size of velocity/spectral width matrix for fits", default=None) 
-    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['kod.d', 'ksr.a', 'ade.a', 'cvw', 'pgr', 'kod.d'])
+    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['kod.d', 'ksr.a', 'ade.a', 'cvw', 'pgr', 'kod.c'])
     parser.add_argument("--datadir", help="base directory for .fitlomb files (defaults to /home/radar/fitlomb/)", default='/home/radar/fitlomb/') 
     parser.add_argument("--overwrite", help="overwrite existing .fitlomb files", action='store_true', default='False') 
 
@@ -542,7 +546,7 @@ def main():
     CALC_SIGMA = args.enable_sigmafit
     DATA_DIR = args.datadir
     OVERWRITE = args.overwrite
-
+    
     if args.resolution != None:
         NFREQS = int(args.resolution)
         NALFS = int(args.resolution)
