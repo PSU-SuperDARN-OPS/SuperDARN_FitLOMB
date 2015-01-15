@@ -13,10 +13,12 @@ import glob
 import time 
 import getpass
 import pdb
+import os
 
 MAX_LOMBDEPTH = 1
-DATADIR = '/home/' + getpass.getuser() + '/fitlomb/'
-PLOTDIR = './plots/'
+DATADIR = '/raid0/tmp/fitlomb/'
+TMPDIR = '/tmp/sd/'
+PLOTDIR = './newplots/'
 VEL_CMAP = plt.cm.RdBu
 FREQ_CMAP = plt.cm.spectral
 NOISE_CMAP = plt.cm.autumn
@@ -102,13 +104,14 @@ def getParam(lombfit, beam, param, starttime, endtime,  maskparam = False, blank
 
 # creates a file with all data from a radar in a folder using soft links
 def createMergefile(radar, starttime, endtime, datadir, beams = None):
-    # todo: work with starttime and endttime datetimes
-    
     # for each day between starttime and endtime
     # loop, adding 1 day to starttime until delta between starttime and endtime is <= 1 day
 
+    if not os.path.exists(TMPDIR):
+        os.makedirs(TMPDIR)
+
     filename = radar + starttime.strftime('%Y%m%d') + 'to' + endtime.strftime('%Y%m%d') + '.hdf5'
-    mergefile = h5py.File(datadir + filename, 'w')
+    mergefile = h5py.File(TMPDIR + filename, 'w')
     while starttime < endtime:
         globname = datadir + starttime.strftime('/%Y/%m.%d/%Y%m%d.*.' + radar + '.fitlomb.hdf5') 
         hdf5files = glob.glob(globname)
@@ -118,15 +121,16 @@ def createMergefile(radar, starttime, endtime, datadir, beams = None):
                 for pulse in f['/']:
                     if beams == None or f[pulse].attrs['bmnum'] in beams:
                         dset = pulse
-                        mergefile[dset] = h5py.ExternalLink(h5f.split('//')[-1], dset) # I've made a terrible mistake..
+                        #mergefile[dset] = h5py.ExternalLink(h5f.split('//')[-1], dset) # I've made a huge mistake..
+                        mergefile[dset] = h5py.ExternalLink('../../../' + h5f, dset) # I've made a huge mistake..
 
                 f.close()
-            except:
+            except None:
                 print 'trouble opening ' + h5f + ', skipping..' 
         starttime = starttime + datetime.timedelta(days=1)
     mergefile.close()
 
-    return datadir + filename
+    return TMPDIR + filename
 
 def PlotFreq(lombfit, beams, starttime, endtime, image = False):
     f, t = getScalar(lombfit, 'tfreq', beams, starttime, endtime)
@@ -316,7 +320,7 @@ def remask(lombfit, starttime, endtime, beams, pmin, qwmin, qvmin, wmax, wmin, v
 
 def PlotTime(radar, starttime, endtime, directory, beams):
     mergefile = createMergefile(RADAR, starttime, endtime, DATADIR, beams)
-    lombfit = h5py.File(mergefile, 'r+')
+    lombfit = h5py.File(mergefile, 'r') # r+ for r/w
     #remask(lombfit, starttime, endtime, beams, PMIN, QWMIN, QVMIN, WMAX, WMIN, VMAX, VMIN, median = False, snr = False)
     plot_vector(lombfit, beams, 'fit_snr_l' , '', starttime, endtime, vmax = 10, vmin = 0, cmap = POWER_CMAP, image=True, scale = dbscale)
     PlotFreq(lombfit, beams, starttime, endtime, image = True)
@@ -334,16 +338,19 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
 
-    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.08.27.00")
-    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.08.28.00")
+    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.02.26.00")
+    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.03.07.00")
     parser.add_argument("--maxplotlen", help="maximum length of a rti plot, in hours", default = 24)
-    parser.add_argument("--radars", help="radar to create data from", default=['mcm.a'])
+    parser.add_argument("--radar", help="radar to create data from", default=['pgr', 'ade.a', 'kod.d', 'cvw', 'ksr.a'])
     parser.add_argument("--beam", help="beam to plot", default=9)
     parser.add_argument("--plotdir", help="directory to place plots (defaults to ./plots/)", default=PLOTDIR)
     parser.add_argument("--nametag", help="extra string to attach to file names (defaults to none)", default='') # TODO..
     args = parser.parse_args()
 
     PLOTDIR = args.plotdir 
+    if not os.path.exists(PLOTDIR):
+        os.makedirs(PLOTDIR)
+
     # parse date string and convert to datetime object
     starttime = datetime.datetime(*time.strptime(args.starttime, "%Y.%m.%d.%H")[:6])
     endtime = datetime.datetime(*time.strptime(args.endtime, "%Y.%m.%d.%H")[:6])
@@ -369,5 +376,5 @@ if __name__ == '__main__':
                 RADAR = radar
                 try:
                     PlotTime(RADAR, stime, plot_times[stime], DATADIR, [beam]) 
-                except:
+                except None:
                     print 'error plotting ' + str(stime) + '... skipping'
