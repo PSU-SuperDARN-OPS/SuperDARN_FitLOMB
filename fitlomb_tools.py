@@ -125,7 +125,7 @@ def createMergefile(radar, starttime, endtime, datadir, beams = None):
                         mergefile[dset] = h5py.ExternalLink('../../../' + h5f, dset) # I've made a huge mistake..
 
                 f.close()
-            except None:
+            except:
                 print 'trouble opening ' + h5f + ', skipping..' 
         starttime = starttime + datetime.timedelta(days=1)
     mergefile.close()
@@ -338,11 +338,11 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
 
-    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.02.26.00")
-    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.03.07.00")
+    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.03.06.00")
+    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.04.01.00")
     parser.add_argument("--maxplotlen", help="maximum length of a rti plot, in hours", default = 24)
-    parser.add_argument("--radar", help="radar to create data from", default=['pgr', 'ade.a', 'kod.d', 'cvw', 'ksr.a'])
-    parser.add_argument("--beam", help="beam to plot", default=9)
+    parser.add_argument("--radars", help="radars to create data from", nargs='+', default=['ade.a', 'kod.d', 'ksr.a'])
+    parser.add_argument("--beams", help="beams to plot", nargs='+', default=[9])
     parser.add_argument("--plotdir", help="directory to place plots (defaults to ./plots/)", default=PLOTDIR)
     parser.add_argument("--nametag", help="extra string to attach to file names (defaults to none)", default='') # TODO..
     args = parser.parse_args()
@@ -371,7 +371,7 @@ if __name__ == '__main__':
         for stime in plot_times.keys():
             timespan = (stime - plot_times[stime])
             TIMEINT = -min(int((timespan.days * 24 * 60 + timespan.seconds / 60.) / 12.),-1)
-            for beam in [args.beam]:
+            for beam in args.beams:
                 print 'plotting '  + str(stime)
                 RADAR = radar
                 try:

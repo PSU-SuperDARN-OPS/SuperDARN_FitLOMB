@@ -1,4 +1,4 @@
-#r/usr/bin/python2
+#/usr/bin/python2
 import pycuda.driver as cuda
 import pycuda.compiler
 import pycuda.autoinit
