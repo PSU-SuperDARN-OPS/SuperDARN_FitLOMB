@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <machine/endian.h>
 
 // to work with fitdata and rprm..
 typedef int8_t int8;
@@ -30,6 +31,27 @@ typedef uint64_t uint64;
 #define REV_MAJOR 0
 #define REV_MINOR 1
 
+#ifndef _BYTESWAP_H
+#define _BYTESWAP_H
+
+//#warning "byteswap.h is an unportable GNU extension! Don't use!"
+
+static inline unsigned short bswap_16(unsigned short x) {
+return (x>>8) | (x<<8);
+}
+
+static inline unsigned int bswap_32(unsigned int x) {
+return (bswap_16(x&0xffff)<<16) | (bswap_16(x>>16));
+}
+
+static inline unsigned long long bswap_64(unsigned long long x) {
+return (((unsigned long long)bswap_32(x&0xffffffffull))<<32) |
+(bswap_32(x>>32));
+}
+
+#endif
+
+
 // prototype copied functions..
 void FitFree(struct FitData *ptr);
 struct FitData * FitMake();
@@ -42,7 +64,7 @@ void RadarParmFree(struct RadarParm *ptr);
 int32_t LombFitOpen(struct LombFile *lombfile, char *filename)
 {
     H5G_info_t ginfo;
-    lombfile->file_id = H5Fopen(FILE, H5F_ACC_RDONLY, H5P_DEFAULT);
+    lombfile->file_id = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
     lombfile->root_group = H5Gopen(lombfile->file_id, "/", H5P_DEFAULT);
     lombfile->status = H5Gget_info (lombfile->root_group, &ginfo);
     lombfile->nrecords = ginfo.nlinks;
@@ -72,6 +94,7 @@ herr_t LombFitReadAttr(struct LombFile *lombfile, char *groupname, char *attrnam
     return status;
 }
 
+
 // send null pointer, lombfitreadvector will alloc space..
 void * LombFitReadVector(hid_t recordgroup, char *dsetname)
 {
@@ -80,15 +103,35 @@ void * LombFitReadVector(hid_t recordgroup, char *dsetname)
     size_t typesize;
     size_t dsetlen;
     void *vectordata;
+    H5T_order_t vectororder;
+
     dset = H5Dopen(recordgroup, dsetname, H5P_DEFAULT);
 
     dsettype = H5Dget_type(dset);
     typesize = H5Tget_size(dsettype);
     dsetspace = H5Dget_space(dset);
+    vectororder = H5Tget_order(dsettype);
     dsetlen = H5Sget_simple_extent_npoints(dsetspace);
     vectordata = malloc(dsetlen * typesize);
 
     status = H5Dread(dset, dsettype, H5S_ALL, H5S_ALL, H5P_DEFAULT, vectordata);
+
+    if(vectororder && (typesize > 1)) {
+        uint32_t i;
+        for (i = 0; i < dsetlen; i++) {
+            switch (typesize) {
+                case 2:
+                    ((uint16_t *) vectordata)[i] = bswap_16(((uint16_t *) vectordata)[i]);
+                    break;
+                case 4:
+                    ((uint32_t *) vectordata)[i] = bswap_32(((uint32_t *) vectordata)[i]);
+                    break;
+                default:
+                    printf("error: type not recognized\n");
+            }
+        }
+    }
+
 
     H5Tclose(dsettype);
     H5Sclose(dsetspace);
@@ -106,7 +149,7 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     
     // return zero if no pulses remain to be read 
     if (lombfile->pulseidx >= lombfile->nrecords || lombfile->nrecords < 0) {
-        return 0;
+        return -1;
     }
 
     // get name of next record (get name size, allocate space, grab name)
@@ -145,6 +188,7 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     LombFitReadAttr(lombfile, groupname, "time.yr", &rprm->time.yr);
     LombFitReadAttr(lombfile, groupname, "time.mo", &rprm->time.mo);
     LombFitReadAttr(lombfile, groupname, "time.dy", &rprm->time.dy);
+    LombFitReadAttr(lombfile, groupname, "time.hr", &rprm->time.hr);
     LombFitReadAttr(lombfile, groupname, "time.mt", &rprm->time.mt);
     LombFitReadAttr(lombfile, groupname, "time.sc", &rprm->time.sc);
     LombFitReadAttr(lombfile, groupname, "time.us", &rprm->time.us);
@@ -185,7 +229,7 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
     LombFitReadAttr(lombfile, groupname, "xcf", &rprm->xcf);
     LombFitReadAttr(lombfile, groupname, "tfreq", &rprm->tfreq);
     LombFitReadAttr(lombfile, groupname, "offset", &rprm->offset);
-    LombFitReadAttr(lombfile, groupname, "ifmode", &rprm->ifmode);
+    //    LombFitReadAttr(lombfile, groupname, "ifmode", &rprm->ifmode);
 
     LombFitReadAttr(lombfile, groupname, "mxpwr", &rprm->mxpwr);
     LombFitReadAttr(lombfile, groupname, "lvmax", &rprm->lvmax);
@@ -199,7 +243,8 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
 
     // populate fit->rng vectors  
     double *v, *v_err, *p_0, *p_l, *p_l_err, *w_l, *w_l_err, *w_s, *w_s_err, *phi0, *phi0_err, *sdev_l, *sdev_s, *sdev_phi;
-    int32_t *qflg, *gsct;
+    int32_t *qflg;
+    int32_t *gsct;
     int8_t *nump;
     uint16_t nrang = 0;
     uint16_t i;
@@ -245,7 +290,7 @@ int LombFitRead(struct LombFile *lombfile, struct RadarParm *rprm, struct FitDat
         fit->rng[i].sdev_s = sdev_s[idx];
 
         // int32
-        fit->rng[i].qflg = qflg[idx];
+        fit->rng[i].qflg = (int)qflg[idx];
 
         // set unsupported parameters to -1
         fit->rng[i].p_0 = -1;
@@ -505,39 +550,6 @@ void RadarParmFree(struct RadarParm *ptr) {
   if (ptr->lag[1] !=NULL) free(ptr->lag[1]);
   if (ptr->combf !=NULL) free(ptr->combf);
   free(ptr);
-}
-
-/* example test code */
-int main(void)
-{
-    struct LombFile lombfile;
-    struct RadarParm *prm;
-    struct FitData *fit;
-    double atme;
-    
-    // create fit and prm structs, open lombfit file
-    fit = FitMake();
-    prm = RadarParmMake();
-    LombFitOpen(&lombfile, FILE);
-    
-    // read the first record
-    LombFitRead(&lombfile, prm, fit);
-    
-    // seek to a time, then read the record at that time
-    LombFitSeek(&lombfile, 2014,2,26,1,20,27, &atme);
-    LombFitRead(&lombfile, prm, fit);
-    
-    // read off remaining records..
-    while(LombFitRead(&lombfile, prm, fit)) {
-        printf(".");
-    }
-    printf("\n");
-    
-    // clean up..
-    LombFitClose(&lombfile);
-    RadarParmFree(prm);
-    FitFree(fit);
-    return 0;
 }
 
 
