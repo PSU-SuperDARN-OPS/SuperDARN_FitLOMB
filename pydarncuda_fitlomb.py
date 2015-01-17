@@ -29,7 +29,7 @@ from multiprocessing import Pool, Manager , cpu_count
 from bigdipper import cache_data, mount_raid0
 
 FITLOMB_REVISION_MAJOR = 3
-FITLOMB_REVISION_MINOR = 4
+FITLOMB_REVISION_MINOR = 7
 ORIGIN_CODE = 'pydarncuda_fitlomb.py'
 DATA_DIR = '/home/' + getpass.getuser() + '/fitlomb/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
@@ -39,20 +39,21 @@ Q_OFFSET = 1
 
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 MAX_V = 2000 # m/s, max velocity (doppler shift) to include in lomb
-MAX_W = 1500 # m/s, max spectral width to include in lomb 
+MAX_W = 1200 # m/s, max spectral width to include in lomb 
+
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
-SNR_THRESH = .10 # minimum ratio of power in fitted signal and residual for a qualtiy fit
-VERR_THRESH = 70 
-WERR_THRESH = 70 
+SNR_THRESH = .5 # minimum ratio of power in fitted signal and residual for a quality fit
+VERR_THRESH = 20 
+WERR_THRESH = 20 
 C = 3e8
 MAX_TFREQ = 16e6
 LOMB_PASSES = 1
-NFREQS = 128 
-NALFS = 128 
+NFREQS = 256 
+NALFS = 256 
 
 CALC_SIGMA = False 
-DEBUG = False 
+DEBUG = False
 LAGDEBUG = False 
 OVERWRITE = False
 
@@ -128,7 +129,7 @@ class CULombFit:
         # threshold on power (snr), spectral width std error m/s, and velocity std error m/s for quality flag
         self.qwle_thresh = WERR_THRESH
         self.qvle_thresh = VERR_THRESH 
-        self.qpwr_thresh = .5
+        self.qpwr_thresh = 1
         self.snr_thresh = SNR_THRESH 
         # thresholds on velocity and spectral width for ionospheric scatter flag (m/s)
         self.wimin_thresh = 100
@@ -429,7 +430,6 @@ def generate_fitlomb(record):
 
     if not os.path.exists(outfilepath):
         os.makedirs(outfilepath)
-    
     if not OVERWRITE and os.path.exists(outfilepath + outfilename):
         print outfilename + ' already exists, skipping... (ovewrite files with --overwrite)'
         return
@@ -506,7 +506,6 @@ def generate_fitlomb(record):
                         fit.CudaCopyPeaks(gpu_sigma, i)
    
             fit.WriteLSSFit(hdf5file) # 4 %
-            #pdb.set_trace()
             #fit.CudaPlotFit(gpu_lambda)
 
         except None:
@@ -529,14 +528,14 @@ def generate_fitlomb(record):
 def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
-    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.03.01.0000")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.04.01.0000")
+    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.02.27.0000")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.03.14.0000")
     parser.add_argument("--enable_sigmafit", help="enable fitting sigma (p_s/v_s) parameters. this will double runtime and GPU VRAM usage", action='store_true', default=False) 
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
     parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default='auto') 
     parser.add_argument("--passes", help="number of lomb fit passes", default=LOMB_PASSES) 
     parser.add_argument("--resolution", help="size of velocity/spectral width matrix for fits", default=None) 
-    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['kod.d', 'ksr.a', 'ade.a', 'cvw', 'pgr', 'kod.c'])
+    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['ksr.a', 'ade.a', 'adw.a', 'mcm.a', 'sps.a', 'kod.d', 'cvw', 'pgr']) 
     parser.add_argument("--datadir", help="base directory for .fitlomb files (defaults to /home/radar/fitlomb/)", default='/home/radar/fitlomb/') 
     parser.add_argument("--overwrite", help="overwrite existing .fitlomb files", action='store_true', default='False') 
 
@@ -545,6 +544,7 @@ def main():
     # TODO: these probably shouldn't be global variables..
     CALC_SIGMA = args.enable_sigmafit
     DATA_DIR = args.datadir
+
     OVERWRITE = args.overwrite
     
     if args.resolution != None:
