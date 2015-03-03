@@ -3,16 +3,13 @@
 # functions to calculate a fitlomb (generalized lomb-scargle peridogram) from a rawacf
 # mit license
 
+# TODO: use all available channels for uaf radars if no channel is specified
+# TODO: add ground flag
+# TODO: fix sigma fit
 # TODO: look at residual spread of fitacf and fitlomb to samples
 # TODO: look at variance of residual, compare with fitacf
-# TODO: use moment-like fitting of peaks so FREQ/ALF resolution can be reduced..
-# TODO: fix qflg for multiple iterations
 # TODO: store data in hdf5 file with large vector for entire record, rather than datasets for each?
-# TODO: look into not throwing out any samples..
-# TODO: keep moment, not peak
 # TODO: test on extended pulse sequences (e.g mcm 10.31.14)
-# TODO: look at scaling spectral width using average temporal inteval in lags
-# (should reduce data usage and allow for compression)
 
 import argparse
 import pydarn.sdio as sdio
@@ -53,9 +50,8 @@ NFREQS = 256
 NALFS = 256 
 
 CALC_SIGMA = False 
-DEBUG = False
+DEBUG = False 
 LAGDEBUG = False 
-OVERWRITE = False
 
 GROUP_ATTR_TYPES = {\
         'txpow':np.int16,\
@@ -167,7 +163,7 @@ class CULombFit:
         self.v_l_e      = np.zeros([self.nrang, self.maxfreqs])
         self.v_l_std    = np.zeros([self.nrang, self.maxfreqs])
 
-        self.gflg       = np.zeros([self.nrang, self.maxfreqs])
+        #self.gflg       = np.zeros([self.nrang, self.maxfreqs])
         self.iflg       = np.zeros([self.nrang, self.maxfreqs])
         self.qflg       = np.zeros([self.nrang, self.maxfreqs])
 
@@ -225,7 +221,7 @@ class CULombFit:
         
         # add calculated parameters
         add_compact_dset(hdf5file, groupname, 'qflg', np.int32(self.qflg), h5py.h5t.STD_I32BE)
-        #add_compact_dset(hdf5file, groupname, 'gflg', np.int8(self.gflg), h5py.h5t.STD_I8BE)
+        add_compact_dset(hdf5file, groupname, 'gflg', np.int8(self.gflg), h5py.h5t.STD_I8BE)
         add_compact_dset(hdf5file, groupname, 'iflg', np.int8(self.iflg), h5py.h5t.STD_I8BE)
         add_compact_dset(hdf5file, groupname, 'nlag', np.int16(self.nlag), h5py.h5t.STD_I16BE)
         
@@ -421,17 +417,16 @@ def generate_fitlomb(record):
     from cuda_bayes import BayesGPU
 
     # unpack record tuple (passing multiple arguements with map is awkward..)
-    stime, etime, radar, lock = record
+    stime, etime, radar, lock, overwrite = record
 
     print 'worker computing from ' + str(stime) + ' to ' + str(etime)
-
     outfilename = stime.strftime('%Y%m%d.%H%M.' + radar + '.fitlomb.hdf5') 
     outfilepath = DATA_DIR + stime.strftime('%Y/%m.%d/') 
 
     if not os.path.exists(outfilepath):
         os.makedirs(outfilepath)
-    if not OVERWRITE and os.path.exists(outfilepath + outfilename):
-        print outfilename + ' already exists, skipping... (ovewrite files with --overwrite)'
+    if not overwrite and os.path.exists(outfilepath + outfilename):
+        print outfilename + ' already exists, skipping... (overwrite files with --overwrite)'
         return
 
     hdf5file = h5py.File(outfilepath + outfilename, 'w')
@@ -528,16 +523,16 @@ def generate_fitlomb(record):
 def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
-    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2014.02.27.0000")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2014.03.14.0000")
+    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2015.02.15.0000")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2015.02.16.0000")
     parser.add_argument("--enable_sigmafit", help="enable fitting sigma (p_s/v_s) parameters. this will double runtime and GPU VRAM usage", action='store_true', default=False) 
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
     parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default='auto') 
     parser.add_argument("--passes", help="number of lomb fit passes", default=LOMB_PASSES) 
     parser.add_argument("--resolution", help="size of velocity/spectral width matrix for fits", default=None) 
-    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['ksr.a', 'ade.a', 'adw.a', 'mcm.a', 'sps.a', 'kod.d', 'cvw', 'pgr']) 
+    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['ade.a', 'adw.a', 'kod.d']) 
     parser.add_argument("--datadir", help="base directory for .fitlomb files (defaults to /home/radar/fitlomb/)", default='/home/radar/fitlomb/') 
-    parser.add_argument("--overwrite", help="overwrite existing .fitlomb files", action='store_true', default='False') 
+    parser.add_argument("--overwrite", help="overwrite existing .fitlomb files", action='store_true', default='True') 
 
     args = parser.parse_args() 
     
@@ -546,7 +541,8 @@ def main():
     DATA_DIR = args.datadir
 
     OVERWRITE = args.overwrite
-    
+    print 'overwrite: ' + str(OVERWRITE)
+
     if args.resolution != None:
         NFREQS = int(args.resolution)
         NALFS = int(args.resolution)
@@ -576,17 +572,17 @@ def main():
     manager = Manager()
     lock = manager.Lock()
     records = []
-
+    
     for radar in args.radars:
         print 'adding ' + radar + ' jobs to pool'
-        if not radar in ['ksr.a', 'ade.a', 'adw.a', 'sps.a',  'kod.c', 'kod.d', 'mcm.a']:
-            print radar + ' is not a UAF radar and may not have data on raid0, syncing with bigdipper...'
-            #cache_data(radar, starttime, endtime)
+        if not radar in ['ksr.a', 'ade.a', 'adw.a', 'sps.a',  'kod.c', 'kod.d', 'mcm.a'] or starttime.year < 2012:
+            print radar + ' may not have data on raid0, syncing with bigdipper...'
+            cache_data(radar, starttime, endtime)
 
         stime = starttime
         while stime < endtime:
             etime = min(stime + datetime.timedelta(hours = args.recordlen), endtime)
-            records.append((stime, etime, radar, lock))
+            records.append((stime, etime, radar, lock, OVERWRITE))
             stime = etime
     
     # run pool of records in parallel

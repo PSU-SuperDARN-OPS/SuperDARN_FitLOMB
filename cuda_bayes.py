@@ -24,7 +24,7 @@ mod = pycuda.compiler.SourceModule("""
 
 #define REAL 0
 #define IMAG 1
-#define MAX_SAMPLES 25
+#define MAX_SAMPLES 25 
 #define MAX_ALPHAS 512 // MUST BE A POWER OF 2
 #define MAX_FREQS 512 // MUST BE A POWER OF 2
 #define PI (3.141592)
@@ -87,7 +87,7 @@ __global__ void calc_bayes(float *samples, int32_t *lags, float *alphas, float *
         s_cs_f[threadIdx.x] = 0;
         alpha = alphas[threadIdx.x];
         for(i = 0; i < nsamples; i++) {
-            s_cs_f[threadIdx.x] += pow(exp(-alpha * lag_times[i]),2) * (s_lags[i] != 0);
+            s_cs_f[threadIdx.x] += pow(exp(pow(-alpha * lag_times[i], env_model)),2) * (s_lags[i] != 0);
         }
     }
     __syncthreads(); 
@@ -230,15 +230,14 @@ __global__ void process_peaks(float *samples, float *ce_matrix, float *se_matrix
     // calculate peak freq by looking at neighbors on p_f and calculating normalized momentish calculation
     peakfreq = freqs[freqidx];
     peakalf = alfs[alfidx];
-    peakamp = calc_amp(peakalf, alfidx, freqidx, ce_matrix, se_matrix,  lagmask, s_times, samples, nlags, nfreqs);
+    peakamp = calc_amp(peakalf, env_model, alfidx, freqidx, ce_matrix, se_matrix,  lagmask, s_times, samples, nlags, nfreqs);
     
 
     // TESTING.. calculate peak SNR and compared to moment SNR
     for (i = 0; i < nlags; i++) {
         int32_t samplebase = threadIdx.x * nlags * 2; 
 
-        float envelope = peakamp * exp(-peakalf * s_times[i]); 
-        // TODO: add in environment model... exp(-peakalf ** 2?)
+        float envelope = peakamp * exp(pow(-peakalf * s_times[i], env_model)); 
         float angle = 2 * PI * peakfreq * s_times[i];
         fitted_signal[2*i] = envelope * cos(angle);
         fitted_signal[2*i+1] = envelope * sin(angle);
@@ -324,7 +323,7 @@ __device__ peak calc_peak(int32_t peakidx, int32_t freqidx, int32_t alfidx, int3
     return p;
 }
 
-__device__ float calc_amp(float alf, int32_t alfidx, int32_t freqidx, float *ce_matrix, float *se_matrix,  int32_t *lagmask, float *s_times, float *samples, int32_t nlags, int32_t nfreqs)
+__device__ float calc_amp(float alf, float env_model, int32_t alfidx, int32_t freqidx, float *ce_matrix, float *se_matrix,  int32_t *lagmask, float *s_times, float *samples, int32_t nlags, int32_t nfreqs)
 {
     int32_t i;
     float cs_f = 0;
@@ -333,7 +332,7 @@ __device__ float calc_amp(float alf, int32_t alfidx, int32_t freqidx, float *ce_
 
     // calculate cs_f at peak, then calculate amplitude
     for(i = 0; i < nlags; i++) {
-        cs_f += pow(exp(-alf * s_times[i]), 2) * (lagmask[threadIdx.x * nlags + i] != 0);
+        cs_f += pow(exp(pow(-alf * s_times[i], env_model)), 2) * (lagmask[threadIdx.x * nlags + i] != 0);
     }
 
     // recalculate r_f and i_f at peak 

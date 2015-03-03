@@ -124,7 +124,7 @@ def make_hyperspacecube(tfreqs_hz,times_secs,fcrit_hz,Vlos_mps,alfs, env_model):
     # python -m line_profiler iterative_bayes.py.lprof
 
     # so... create cube of alpha by time at dc 
-    envelope = np.exp(np.outer(-(alfs ** env_model), times_secs))
+    envelope = np.exp(np.outer(-(alfs ** env_model), times_secs**env_model))
     envelope_cube = np.tile(envelope, (len(Vlos_mps),len(fcrit_hz),1,1))
 
     # rearrange cubes to match format of ce_matrix and se_matrix
