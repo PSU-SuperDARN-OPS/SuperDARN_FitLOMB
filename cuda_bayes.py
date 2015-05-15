@@ -35,8 +35,8 @@ typedef struct
     float freq, alf, amp;
 } peak;
 
-__device__ peak calc_peak(int32_t peakidx, int32_t freqidx, int32_t alfidx, int32_t nalfs, int32_t nlags, int32_t nfreqs, double *P_f, float *freqs, float *alfs, float *ce_matrix, float *se_matrix, int32_t *lagmask, float *s_times, float *samples);
-__device__ float calc_amp(float alf, int32_t alfidx, int32_t freqidx, float *ce_matrix, float *se_matrix,  int32_t *lagmask, float *s_times, float *samples, int32_t nlags, int32_t nfreqs);
+__device__ peak calc_peak(int32_t peakidx, int32_t freqidx, int32_t alfidx, int32_t nalfs, int32_t nlags, int32_t nfreqs, double *P_f, float *freqs, float *alfs, float *ce_matrix, float *se_matrix, int32_t *lagmask, float *s_times, float *samples, float env_model);
+__device__ float calc_amp(float alf, float env_model, int32_t alfidx, int32_t freqidx, float *ce_matrix, float *se_matrix,  int32_t *lagmask, float *s_times, float *samples, int32_t nlags, int32_t nfreqs);
 
 // see generalizing the lomb-scargle periodogram, g. bretthorst
 __global__ void calc_bayes(float *samples, int32_t *lags, float *alphas, float *lag_times, float *ce_matrix, float *se_matrix, double *P_f, float env_model, int32_t nsamples, int32_t nalphas, int32_t *n_good_lags_v)
@@ -253,7 +253,7 @@ __global__ void process_peaks(float *samples, float *ce_matrix, float *se_matrix
     fitpwr = 0;
     rempwr = 0;
 
-    p = calc_peak(peakidx, freqidx, alfidx, nalphas, nlags, nfreqs, P_f, freqs, alfs, ce_matrix, se_matrix, lagmask, s_times, samples);
+    p = calc_peak(peakidx, freqidx, alfidx, nalphas, nlags, nfreqs, P_f, freqs, alfs, ce_matrix, se_matrix, lagmask, s_times, samples, env_model);
     __syncthreads();
     
     peakfreq = p.freq;
@@ -284,7 +284,7 @@ __global__ void process_peaks(float *samples, float *ce_matrix, float *se_matrix
 }
 
 // normalize log prob to peak
-__device__ peak calc_peak(int32_t peakidx, int32_t freqidx, int32_t alfidx, int32_t nalfs, int32_t nlags, int32_t nfreqs, double *P_f, float *freqs, float *alfs, float *ce_matrix, float *se_matrix, int32_t *lagmask, float *s_times, float *samples)
+__device__ peak calc_peak(int32_t peakidx, int32_t freqidx, int32_t alfidx, int32_t nalfs, int32_t nlags, int32_t nfreqs, double *P_f, float *freqs, float *alfs, float *ce_matrix, float *se_matrix, int32_t *lagmask, float *s_times, float *samples, float env_model)
 {
     int32_t i;
     int32_t j;
@@ -317,7 +317,7 @@ __device__ peak calc_peak(int32_t peakidx, int32_t freqidx, int32_t alfidx, int3
             p_f[i*3 + j] = p_f[i*3 + j] / p_f_sum;
             p.freq += p_f[i*3 + j] * freq;
             p.alf += p_f[i*3 + j] * alf;
-            p.amp += p_f[i*3 + j] * calc_amp(alf, alfidx + i - reach, freqidx + j - reach, ce_matrix, se_matrix, lagmask, s_times, samples, nlags, nfreqs);
+            p.amp += p_f[i*3 + j] * calc_amp(alf, env_model, alfidx + i - reach, freqidx + j - reach, ce_matrix, se_matrix, lagmask, s_times, samples, nlags, nfreqs);
         }
     }
     return p;

@@ -49,8 +49,7 @@ LOMB_PASSES = 1
 NFREQS = 256 
 NALFS = 256 
 
-CALC_SIGMA = False 
-DEBUG = False 
+DEBUG = True 
 LAGDEBUG = False 
 
 GROUP_ATTR_TYPES = {\
@@ -163,7 +162,7 @@ class CULombFit:
         self.v_l_e      = np.zeros([self.nrang, self.maxfreqs])
         self.v_l_std    = np.zeros([self.nrang, self.maxfreqs])
 
-        #self.gflg       = np.zeros([self.nrang, self.maxfreqs])
+        self.gflg       = np.zeros([self.nrang, self.maxfreqs])
         self.iflg       = np.zeros([self.nrang, self.maxfreqs])
         self.qflg       = np.zeros([self.nrang, self.maxfreqs])
 
@@ -172,7 +171,7 @@ class CULombFit:
         self.CalcLags()
          
     # appends a record of the lss fit to an hdf5 file
-    def WriteLSSFit(self, hdf5file):
+    def WriteLSSFit(self, hdf5file, calc_sigma = False):
         groupname = str(calendar.timegm(self.recordtime.timetuple()))
         grp = hdf5file.create_group(groupname)
         # add scalars as attributes to group
@@ -236,7 +235,7 @@ class CULombFit:
         add_compact_dset(hdf5file, groupname, 'fit_snr_l', np.float64(self.fit_snr_l), h5py.h5t.NATIVE_DOUBLE)
         add_compact_dset(hdf5file, groupname, 'fit_snr_l_peak', np.float64(self.fit_snr_l), h5py.h5t.NATIVE_DOUBLE)
 
-        if CALC_SIGMA:
+        if calc_sigma:
             add_compact_dset(hdf5file, groupname, 'p_s', np.float64(self.p_s), h5py.h5t.NATIVE_DOUBLE)
             #add_compact_dset(hdf5file, groupname, 'p_s_e', np.float64(self.p_s_e), h5py.h5t.NATIVE_DOUBLE)
             add_compact_dset(hdf5file, groupname, 'w_s', np.float64(self.w_s), h5py.h5t.NATIVE_DOUBLE)
@@ -414,10 +413,10 @@ def add_compact_dset(hdf5file, group, dsetname, data, dtype, mask = []):
 # worker function to fitlomb process a block of time
 #@profile
 def generate_fitlomb(record):
+    print 'starting generate fitlomb'
     from cuda_bayes import BayesGPU
-
     # unpack record tuple (passing multiple arguements with map is awkward..)
-    stime, etime, radar, lock, overwrite = record
+    stime, etime, radar, lock, overwrite, calc_sigma = record
 
     print 'worker computing from ' + str(stime) + ' to ' + str(etime)
     outfilename = stime.strftime('%Y%m%d.%H%M.' + radar + '.fitlomb.hdf5') 
@@ -452,7 +451,7 @@ def generate_fitlomb(record):
     
     txlag_cache = None
     gpu_lambda = None
-    if CALC_SIGMA:
+    if calc_sigma:
         gpu_sigma = None
 
     while drec != None:
@@ -465,7 +464,7 @@ def generate_fitlomb(record):
         # create velocity and spectral width space based on maximum transmit frequency
         if gpu_lambda == None:
             gpu_lambda = BayesGPU(fit.lags, freqs, alfs, fit.nrang, LAMBDA_FIT)
-            if CALC_SIGMA:
+            if calc_sigma:
                 gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
             txlag_cache = lagstate.good_lags_txsamples(fit)
 
@@ -473,7 +472,7 @@ def generate_fitlomb(record):
         elif gpu_lambda.npulses != fit.nrang or (not np.array_equal(fit.lags, gpu_lambda.lags)):
             gpu_lambda = BayesGPU(fit.lags, freqs, alfs, fit.nrang, LAMBDA_FIT)
 
-            if CALC_SIGMA:
+            if calc_sigma:
                 gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
 
             txlag_cache = lagstate.good_lags_txsamples(fit)
@@ -483,24 +482,24 @@ def generate_fitlomb(record):
 
         try:
             fit.CudaProcessPulse(gpu_lambda)
-            if CALC_SIGMA:
+            if calc_sigma:
                 fit.CudaProcessPulse(gpu_sigma)
 
             fit.CudaCopyPeaks(gpu_lambda)
-            if CALC_SIGMA:
+            if calc_sigma:
                 fit.CudaCopyPeaks(gpu_sigma)
             
             if(LOMB_PASSES >= 1):
                 for i in xrange(1, LOMB_PASSES):
                     fit.CudaProcessPulse(gpu_lambda, copy_samples = False) 
-                    if CALC_SIGMA:
+                    if calc_sigma:
                         fit.CudaProcessPulse(gpu_sigma, copy_samples = False) 
 
                     fit.CudaCopyPeaks(gpu_lambda, i)
-                    if CALC_SIGMA:
+                    if calc_sigma:
                         fit.CudaCopyPeaks(gpu_sigma, i)
    
-            fit.WriteLSSFit(hdf5file) # 4 %
+            fit.WriteLSSFit(hdf5file, calc_sigma) # 4 %
             #fit.CudaPlotFit(gpu_lambda)
 
         except None:
@@ -523,21 +522,21 @@ def generate_fitlomb(record):
 def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
-    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2015.02.15.0000")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2015.02.16.0000")
-    parser.add_argument("--enable_sigmafit", help="enable fitting sigma (p_s/v_s) parameters. this will double runtime and GPU VRAM usage", action='store_true', default=False) 
+    parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2015.02.25.0000")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2015.02.26.0000")
+    parser.add_argument("--disable_sigmafit", help="disable fitting sigma (p_s/v_s) parameters. this will halve runtime and GPU VRAM usage", action='store_true', default=False) 
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
     parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default='auto') 
     parser.add_argument("--passes", help="number of lomb fit passes", default=LOMB_PASSES) 
     parser.add_argument("--resolution", help="size of velocity/spectral width matrix for fits", default=None) 
-    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['ade.a', 'adw.a', 'kod.d']) 
+    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['mcm.a', 'mcm.b'])
     parser.add_argument("--datadir", help="base directory for .fitlomb files (defaults to /home/radar/fitlomb/)", default='/home/radar/fitlomb/') 
     parser.add_argument("--overwrite", help="overwrite existing .fitlomb files", action='store_true', default='True') 
 
     args = parser.parse_args() 
     
     # TODO: these probably shouldn't be global variables..
-    CALC_SIGMA = args.enable_sigmafit
+    calc_sigma = not args.disable_sigmafit
     DATA_DIR = args.datadir
 
     OVERWRITE = args.overwrite
@@ -582,7 +581,7 @@ def main():
         stime = starttime
         while stime < endtime:
             etime = min(stime + datetime.timedelta(hours = args.recordlen), endtime)
-            records.append((stime, etime, radar, lock, OVERWRITE))
+            records.append((stime, etime, radar, lock, OVERWRITE, calc_sigma))
             stime = etime
     
     # run pool of records in parallel

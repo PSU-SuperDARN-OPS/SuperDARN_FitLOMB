@@ -16,7 +16,7 @@ import pdb
 import os
 
 MAX_LOMBDEPTH = 1
-DATADIR = '/raid0/tmp/fitlomb/'
+DATADIR = '~/fitlomb/'
 TMPDIR = '/tmp/sd/'
 PLOTDIR = './newplots/'
 VEL_CMAP = plt.cm.RdBu
@@ -338,11 +338,11 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
 
-    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2014.03.06.00")
-    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2014.04.01.00")
+    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2015.02.24.00")
+    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2015.02.24.04")
     parser.add_argument("--maxplotlen", help="maximum length of a rti plot, in hours", default = 24)
-    parser.add_argument("--radars", help="radars to create data from", nargs='+', default=['ade.a', 'kod.d', 'ksr.a'])
-    parser.add_argument("--beams", help="beams to plot", nargs='+', default=[9])
+    parser.add_argument("--radars", help="radars to create data from", nargs='+', default=['mcm.a'])
+    parser.add_argument("--beams", help="beams to plot", nargs='+', default=[8])
     parser.add_argument("--plotdir", help="directory to place plots (defaults to ./plots/)", default=PLOTDIR)
     parser.add_argument("--nametag", help="extra string to attach to file names (defaults to none)", default='') # TODO..
     args = parser.parse_args()
