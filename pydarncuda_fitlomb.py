@@ -10,6 +10,7 @@
 # TODO: look at variance of residual, compare with fitacf
 # TODO: store data in hdf5 file with large vector for entire record, rather than datasets for each?
 # TODO: test on extended pulse sequences (e.g mcm 10.31.14)
+# TODO: add r2 to fit
 
 import argparse
 import pydarn.sdio as sdio
@@ -389,10 +390,17 @@ class CULombFit:
     
     # calculate and store bad lags
     #@profile
-    def SetBadlags(self, txlag_cache = None):
-        self.bad_lags = lagstate.get_bad_lags(self, txlags = txlag_cache)
-        self.nlag[:,0] = self.mplgs - sum(self.bad_lags.T)
-        self.CalcNoise()
+    def SetBadlags(self, txlag_cache = None,  fitacf_style = True):
+        # use jef's fitacf-style badlags detection
+        if fitacf_style:
+            self.bad_lags, tup = lagstate.fitacf_bad_lags(self, self.rawacf.pwr0, self.rawacf.acfd)
+            self.nlag[:,0] = self.mplgs - sum(self.bad_lags.T)
+            self.CalcNoise()
+        # set tx lags as bad, and convolute pulse sequence with lag0 power to estimate cross range interference 
+        else:
+            self.bad_lags = lagstate.convo_get_bad_lags(self)
+            self.nlag[:,0] = self.mplgs - sum(self.bad_lags.T)
+            self.CalcNoise()
 
 # create a COMPACT type h5py dataset using low level API...
 def add_compact_dset(hdf5file, group, dsetname, data, dtype, mask = []):
@@ -466,7 +474,7 @@ def generate_fitlomb(record):
             gpu_lambda = BayesGPU(fit.lags, freqs, alfs, fit.nrang, LAMBDA_FIT)
             if calc_sigma:
                 gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
-            txlag_cache = lagstate.good_lags_txsamples(fit)
+            #txlag_cache = lagstate.good_lags_txsamples(fit)
 
         # generate new caches on the GPU for the fit if the pulse sequence has changed 
         elif gpu_lambda.npulses != fit.nrang or (not np.array_equal(fit.lags, gpu_lambda.lags)):
@@ -475,10 +483,10 @@ def generate_fitlomb(record):
             if calc_sigma:
                 gpu_sigma = BayesGPU(fit.lags, freqs, alfs, fit.nrang, SIGMA_FIT)
 
-            txlag_cache = lagstate.good_lags_txsamples(fit)
+            #txlag_cache = lagstate.good_lags_txsamples(fit)
             print 'the pulse sequence has changed'
         
-        fit.SetBadlags(txlag_cache = txlag_cache)
+        fit.SetBadlags(fitacf_style = True) #txlag_cache = txlag_cache)
 
         try:
             fit.CudaProcessPulse(gpu_lambda)
