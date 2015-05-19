@@ -27,7 +27,7 @@ from multiprocessing import Pool, Manager , cpu_count
 from bigdipper import cache_data, mount_raid0
 
 FITLOMB_REVISION_MAJOR = 3
-FITLOMB_REVISION_MINOR = 7
+FITLOMB_REVISION_MINOR = 8
 ORIGIN_CODE = 'pydarncuda_fitlomb.py'
 DATA_DIR = '/home/' + getpass.getuser() + '/fitlomb/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
@@ -44,13 +44,13 @@ SIGMA_FIT = 2
 SNR_THRESH = .5 # minimum ratio of power in fitted signal and residual for a quality fit
 VERR_THRESH = 20 
 WERR_THRESH = 20 
-C = 3e8
+C = 299792458. 
 MAX_TFREQ = 16e6
 LOMB_PASSES = 1
-NFREQS = 256 
-NALFS = 256 
+NFREQS = 512 
+NALFS = 512 
 
-DEBUG = True 
+DEBUG = False 
 LAGDEBUG = False 
 
 GROUP_ATTR_TYPES = {\
@@ -169,6 +169,13 @@ class CULombFit:
 
         self.nlag       = np.zeros([self.nrang, self.maxfreqs])
 
+        self.v_sigma_l  = np.zeros([self.nrang, self.maxfreqs])
+        self.v_sigma_s  = np.zeros([self.nrang, self.maxfreqs])
+        self.slope_sigma_l = np.zeros([self.nrang, self.maxfreqs])
+        self.slope_sigma_s = np.zeros([self.nrang, self.maxfreqs])
+        self.phi_sigma_l = np.zeros([self.nrang, self.maxfreqs])
+        self.phi_sigma_s = np.zeros([self.nrang, self.maxfreqs])
+
         self.CalcLags()
          
     # appends a record of the lss fit to an hdf5 file
@@ -235,6 +242,9 @@ class CULombFit:
         add_compact_dset(hdf5file, groupname, 'v_l_std', np.float64(self.v_l_std), h5py.h5t.NATIVE_DOUBLE)
         add_compact_dset(hdf5file, groupname, 'fit_snr_l', np.float64(self.fit_snr_l), h5py.h5t.NATIVE_DOUBLE)
         add_compact_dset(hdf5file, groupname, 'fit_snr_l_peak', np.float64(self.fit_snr_l), h5py.h5t.NATIVE_DOUBLE)
+        add_compact_dset(hdf5file, groupname, 'v_sigma_l', np.float64(self.v_sigma_l), h5py.h5t.NATIVE_DOUBLE)
+        add_compact_dset(hdf5file, groupname, 'phi_sigma_l', np.float64(self.phi_sigma_l), h5py.h5t.NATIVE_DOUBLE)
+        add_compact_dset(hdf5file, groupname, 'slope_sigma_l', np.float64(self.slope_sigma_l), h5py.h5t.NATIVE_DOUBLE)
 
         if calc_sigma:
             add_compact_dset(hdf5file, groupname, 'p_s', np.float64(self.p_s), h5py.h5t.NATIVE_DOUBLE)
@@ -246,7 +256,11 @@ class CULombFit:
             add_compact_dset(hdf5file, groupname, 'v_s_e', np.float64(self.v_s_e), h5py.h5t.NATIVE_DOUBLE)
             add_compact_dset(hdf5file, groupname, 'v_s_std', np.float64(self.v_s_std), h5py.h5t.NATIVE_DOUBLE)
             add_compact_dset(hdf5file, groupname, 'fit_snr_s', np.float64(self.fit_snr_s), h5py.h5t.NATIVE_DOUBLE)
-    
+            add_compact_dset(hdf5file, groupname, 'v_sigma_s', np.float64(self.v_sigma_s), h5py.h5t.NATIVE_DOUBLE)
+            add_compact_dset(hdf5file, groupname, 'phi_sigma_s', np.float64(self.phi_sigma_s), h5py.h5t.NATIVE_DOUBLE)
+            add_compact_dset(hdf5file, groupname, 'slope_sigma_s', np.float64(self.slope_sigma_s), h5py.h5t.NATIVE_DOUBLE)
+
+   
     #@profile 
     def CudaProcessPulse(self, gpu, copy_samples = True):
         lagsmask = []
@@ -257,7 +271,6 @@ class CULombFit:
             times, samples = self._CalcSamples(r)
             lmask = [l in times for l in gpu.lags]
             lagsmask.append(lmask)
-            
             # create interleaved samples array (todo: don't calculate bad samples for ~2x speedup)
             i = 0
             for (j,l) in enumerate(lmask):
@@ -269,7 +282,6 @@ class CULombFit:
         
         lagsmask = np.int8(np.array(lagsmask))
         self.isamples = np.float32(np.array(isamples))
-
         gpu.run_bayesfit(self.isamples, lagsmask, copy_samples = copy_samples)
         gpu.process_bayesfit(self.tfreq, self.noise)
 
@@ -288,7 +300,7 @@ class CULombFit:
 
         t = self.lags[good_lags == True]
         samples = i_lags + 1j * q_lags
-        return t, samples
+        return t, samples # t is good sample times, samples are good samples at times t
 
     def CalcLags(self):
         self.lags = np.float32(np.array(map(lambda x : abs(x[1]-x[0]), self.ltab[0:self.mplgs])) * (self.mpinc / 1e6))
@@ -322,6 +334,10 @@ class CULombFit:
 
             self.qflg[:,itr][qflg[:,0]] = 1
 
+            self.phi_sigma_l[:,itr] = gpu.phi_sigma
+            self.v_sigma_l[:,itr] = gpu.v_sigma
+            self.slope_sigma_l[:,itr] = gpu.slope_sigma
+
         elif gpu.env_model == SIGMA_FIT:
             self.w_s[:, itr] = gpu.w 
             self.w_s_std[:,itr] = gpu.w_std
@@ -333,7 +349,10 @@ class CULombFit:
 
             self.p_s[:,itr] = gpu.p
             self.fit_snr_s[:,itr] = gpu.snr
-        
+            self.phi_sigma_s[:,itr] = gpu.phi_sigma
+            self.v_sigma_s[:,itr] = gpu.v_sigma
+            self.slope_sigma_s[:,itr] = gpu.slope_sigma
+
         else:
             print 'error - unknown environment model'
     
@@ -390,17 +409,19 @@ class CULombFit:
     
     # calculate and store bad lags
     #@profile
-    def SetBadlags(self, txlag_cache = None,  fitacf_style = True):
+    def SetBadlags(self, txlag_cache = None, fitacf_style = True):
         # use jef's fitacf-style badlags detection
         if fitacf_style:
-            self.bad_lags, tup = lagstate.fitacf_bad_lags(self, self.rawacf.pwr0, self.rawacf.acfd)
-            self.nlag[:,0] = self.mplgs - sum(self.bad_lags.T)
-            self.CalcNoise()
+            self.bad_lags, tup = lagstate.fitacf_bad_lags(self.rawacf.prm, self.rawacf.fit.pwr0, np.array(self.rawacf.rawacf.acfd))
+
         # set tx lags as bad, and convolute pulse sequence with lag0 power to estimate cross range interference 
         else:
+            print 'using convo'
             self.bad_lags = lagstate.convo_get_bad_lags(self)
-            self.nlag[:,0] = self.mplgs - sum(self.bad_lags.T)
-            self.CalcNoise()
+
+        self.nlag[:,0] = self.mplgs - sum(self.bad_lags.T)
+        self.CalcNoise()
+
 
 # create a COMPACT type h5py dataset using low level API...
 def add_compact_dset(hdf5file, group, dsetname, data, dtype, mask = []):
@@ -486,7 +507,7 @@ def generate_fitlomb(record):
             #txlag_cache = lagstate.good_lags_txsamples(fit)
             print 'the pulse sequence has changed'
         
-        fit.SetBadlags(fitacf_style = True) #txlag_cache = txlag_cache)
+        fit.SetBadlags()
 
         try:
             fit.CudaProcessPulse(gpu_lambda)
@@ -531,13 +552,13 @@ def main():
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
     
     parser.add_argument("--starttime", help="start time of fit (yyyy.mm.dd.hhMM) e.g 2014.02.25.0000", default = "2015.02.25.0000")
-    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2015.02.26.0000")
+    parser.add_argument("--endtime", help="ending time of fit (yyyy.mm.dd.hhMM) e.g 2014.03.10.0000", default = "2015.02.25.0400")
     parser.add_argument("--disable_sigmafit", help="disable fitting sigma (p_s/v_s) parameters. this will halve runtime and GPU VRAM usage", action='store_true', default=False) 
     parser.add_argument("--recordlen", help="breaks the output into recordlen hour length files (max 24)", default=2) 
     parser.add_argument("--poolsize", help="maximum number of simultaneous subprocesses", default='auto') 
     parser.add_argument("--passes", help="number of lomb fit passes", default=LOMB_PASSES) 
     parser.add_argument("--resolution", help="size of velocity/spectral width matrix for fits", default=None) 
-    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['mcm.a', 'mcm.b'])
+    parser.add_argument("--radars", help="radar(s) to process data on", nargs='+', default=['mcm.a'])#, 'mcm.b', 'kod.d', 'kod.c', 'ade.a', 'adw.a'])
     parser.add_argument("--datadir", help="base directory for .fitlomb files (defaults to /home/radar/fitlomb/)", default='/home/radar/fitlomb/') 
     parser.add_argument("--overwrite", help="overwrite existing .fitlomb files", action='store_true', default='True') 
 
@@ -582,7 +603,8 @@ def main():
     
     for radar in args.radars:
         print 'adding ' + radar + ' jobs to pool'
-        if not radar in ['ksr.a', 'ade.a', 'adw.a', 'sps.a',  'kod.c', 'kod.d', 'mcm.a'] or starttime.year < 2012:
+        if not radar in ['ksr.a', 'ade.a', 'adw.a', 'sps.a',  'kod.c', 'kod.d', 'mcm.a', 'mcm.b'] or starttime.year < 2012:
+            pdb.set_trace()
             print radar + ' may not have data on raid0, syncing with bigdipper...'
             cache_data(radar, starttime, endtime)
 

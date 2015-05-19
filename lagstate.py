@@ -1,7 +1,7 @@
 import numpy as np
 import pdb
 
-OVERLAP_THRESH = .25
+OVERLAP_THRESH = .20
 
 # TODO: handle case with lag 0 - if lag 0 is bad, use alternate lag zero (if it exists..)
 # (regenerate behavior for rawacf...)
@@ -144,7 +144,7 @@ def fitacf_more_badlags(w,good_lags,prm,noise_lev=0.0):
 
 # code from jef to simulate fitacf badlags
 def fitacf_good_lags(prm,pwr0,acfd):
-  print "Acfd:",acfd.shape
+  #print "Acfd:",acfd.shape
   good_lags_tx=np.ones((prm.nrang,prm.mplgs),dtype='bool')
   good_lags_range=np.ones((prm.nrang,prm.mplgs),dtype='bool')
   good_lags_fluct=np.ones((prm.nrang,prm.mplgs),dtype='bool')
@@ -159,7 +159,7 @@ def fitacf_good_lags(prm,pwr0,acfd):
        ptimes_usec.append([t1,t2])
        psamples.append([int(t1/prm.smsep),int(t2/prm.smsep)])
        psamples_offsetted.append([int(t1/prm.smsep)+smpoff,int(t2/prm.smsep)+smpoff])
-  print "Psamples:",psamples_offsetted
+  #nprint "Psamples:",psamples_offsetted
   for rbin in xrange(prm.nrang):
        lag_state=[]
        for l in xrange(prm.mplgs):
@@ -212,8 +212,8 @@ def fitacf_good_lags(prm,pwr0,acfd):
               pass
     w=np.abs(acfd[rbin,:,0]+1j*acfd[rbin,:,1])
     noise_lev=1.6*max(1.,np.median(sorted(pwr0)[0:10]))
-    print rbin, " Pwr0:",w[0]," Noise:",noise_lev
-    more_badlags(w,good_lags_fluct[rbin],prm,noise_lev=noise_lev)
+    #print rbin, " Pwr0:",w[0]," Noise:",noise_lev
+    fitacf_more_badlags(w,good_lags_fluct[rbin],prm,noise_lev=noise_lev)
     #print "  More_bad:",rbin, np.sum(good_lags_fluct[rbin]),good_lags_fluct[rbin]
 
   tup=(good_lags_tx,good_lags_range,good_lags_fluct)
@@ -222,7 +222,7 @@ def fitacf_good_lags(prm,pwr0,acfd):
 
 
 def fitacf_bad_lags(prm,pwr0,acfd):
-  glags,tup=convo_good_lags(prm,pwr0,acfd)
+  glags,tup=fitacf_good_lags(prm,pwr0,acfd)
   for item in tup:
     item=~item
   return ~glags,tup

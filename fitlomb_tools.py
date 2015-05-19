@@ -16,7 +16,7 @@ import pdb
 import os
 
 MAX_LOMBDEPTH = 1
-DATADIR = '~/fitlomb/'
+DATADIR = '/home/radar/fitlomb/'
 TMPDIR = '/tmp/sd/'
 PLOTDIR = './newplots/'
 VEL_CMAP = plt.cm.RdBu
@@ -80,7 +80,7 @@ def getRecordtimes(lombfit, beams, starttime, endtime):
 # gets a parameter across the beam for the file with a mask
 # for example, param 'p_l' with maskparam 'qflg' will return a range x time x lombdepth array of power for the beam
 def getParam(lombfit, beam, param, starttime, endtime,  maskparam = False, blank = WHITE):
-    pulses = getPulses(lombfit, beam, starttime, endtime)#[beam])
+    pulses = getPulses(lombfit, beam, starttime, endtime)
      
     times = [datetime.datetime.utcfromtimestamp(p.attrs['epoch.time']) for p in pulses]
     rgates = [p.attrs['nrang'] for p in pulses] 
@@ -94,7 +94,7 @@ def getParam(lombfit, beam, param, starttime, endtime,  maskparam = False, blank
     for (t,pulse) in enumerate(pulses):
 
         zeropad = np.zeros([max(rgates) - pulse.attrs['nrang'], MAX_LOMBDEPTH])
-
+        print param
         if maskparam:
             rtiparam[t,:,:] = np.vstack((pulse[param][:] * pulse[maskparam][:], zeropad))
             rtiparam[t,:,:] += (np.vstack((pulse[maskparam][:], zeropad)) == 0) * blank 
@@ -106,7 +106,6 @@ def getParam(lombfit, beam, param, starttime, endtime,  maskparam = False, blank
 def createMergefile(radar, starttime, endtime, datadir, beams = None):
     # for each day between starttime and endtime
     # loop, adding 1 day to starttime until delta between starttime and endtime is <= 1 day
-
     if not os.path.exists(TMPDIR):
         os.makedirs(TMPDIR)
 
@@ -264,7 +263,7 @@ def Plot_v(lombfit, beam, starttime, endtime, cmap = plt.cm.get_cmap("SD_V"), im
 
 def plot_vector(lombfit, beam, param, flag, starttime, endtime, vmax = 1500, vmin = -1500, cmap = plt.cm.get_cmap("SD_V"), image = False, scale = None):
     times, ranges, vec = getParam(lombfit, beam, param, starttime, endtime, maskparam = flag)
-
+    
     if scale:
         vec = scale(vec)
 
@@ -319,16 +318,17 @@ def remask(lombfit, starttime, endtime, beams, pmin, qwmin, qvmin, wmax, wmin, v
 
 
 def PlotTime(radar, starttime, endtime, directory, beams):
-    mergefile = createMergefile(RADAR, starttime, endtime, DATADIR, beams)
+    mergefile = createMergefile(radar, starttime, endtime, directory, beams)
     lombfit = h5py.File(mergefile, 'r') # r+ for r/w
     #remask(lombfit, starttime, endtime, beams, PMIN, QWMIN, QVMIN, WMAX, WMIN, VMAX, VMIN, median = False, snr = False)
-    plot_vector(lombfit, beams, 'fit_snr_l' , '', starttime, endtime, vmax = 10, vmin = 0, cmap = POWER_CMAP, image=True, scale = dbscale)
     PlotFreq(lombfit, beams, starttime, endtime, image = True)
     Plot_p_l(lombfit, beams, starttime, endtime, image = True)
     Plot_w_l(lombfit, beams, starttime, endtime, image = True)
     Plot_v(lombfit, beams, starttime, endtime, image = True)
 
+    plot_vector(lombfit, beams, 'fit_snr_l' , '', starttime, endtime, vmax = 10, vmin = 0, cmap = POWER_CMAP, image=True, scale = dbscale)
     plot_vector(lombfit, beams, 'v_e' , '', starttime, endtime, vmax = 200, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
+    plot_vector(lombfit, beams, 'v_sigma_l' , '', starttime, endtime, vmax = 200, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
     plot_vector(lombfit, beams, 'w_l_e' , '', starttime, endtime, vmax = 200, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
     plot_vector(lombfit, beams, 'nlag' , '', starttime, endtime, vmax = 23, vmin = 0, cmap = plt.cm.get_cmap("SD_V"), image=True)
     lombfit.close()
@@ -338,8 +338,8 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Processes RawACF files with a Lomb-Scargle periodogram to produce FitACF-like science data.')
 
-    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2015.02.24.00")
-    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2015.02.24.04")
+    parser.add_argument("--starttime", help="start time of the plot (yyyy.mm.dd.hh) e.g 2014.03.01.00", default = "2015.02.25.00")
+    parser.add_argument("--endtime", help="ending time of the plot (yyyy.mm.dd.hh) e.g 2014.03.08.12", default = "2015.02.25.04")
     parser.add_argument("--maxplotlen", help="maximum length of a rti plot, in hours", default = 24)
     parser.add_argument("--radars", help="radars to create data from", nargs='+', default=['mcm.a'])
     parser.add_argument("--beams", help="beams to plot", nargs='+', default=[8])

@@ -5,7 +5,7 @@ import pycuda.autoinit
 import numpy as np
 from itertools import chain, izip
 from timecube import make_spacecube
-
+from spaleta_error import phase_fit_error
 # debugging imports
 import pdb
 import matplotlib.pyplot as plt
@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 # TODO: fix env model..
 # TODO: create unit tests to compare SNR
 
-C = 3e8
+C = 299792458.
 FWHM_TO_SIGMA = 2.355 # conversion of fwhm to std deviation, assuming gaussian
 LAMBDA_FIT = 1
 SIGMA_FIT = 2
@@ -487,7 +487,7 @@ class BayesGPU:
         self.v = (self.freqs[v_idx] * C) / (2 * tfreq * 1e3)
         self.v_std = dfreqs * ((((self.freq_fwhm) * C) / (2 * tfreq * 1e3)) / FWHM_TO_SIGMA)
         self.v_e = self.v_std / np.sqrt(N)
-
+        
         self.p = self.amplitudes / noise
         self.p[self.p <= 0] = np.nan
         self.p = 10 * np.log10(self.p)
@@ -495,6 +495,33 @@ class BayesGPU:
         # raw freq/decay for debugging
         self.vfreq = (self.freqs[v_idx])
         self.walf = (self.alfs[w_idx])
+        
+        #self.phase_mse = np.zeros(self.npulses) # mse of fitted phase to sample phase for good lags
+        #self.envelope_mse = np.zeros(self.npulses) # mse of fitted envelope magnitude to sample good lag magnitudes 
+    
+        self.phi_sigma = np.zeros(self.npulses)
+        self.v_sigma = np.zeros(self.npulses)
+        self.slope_sigma = np.zeros(self.npulses)
+        # calculate mse for phase, amplitude, and overall signal for fitacf comparison
+        for (r, mask) in enumerate(self.lagmask):
+            goodmask = (mask == 1)
+            lagtimes = self.lags[goodmask]
+            samples_i = self.samples[r][0::2][goodmask]
+            samples_q = self.samples[r][1::2][goodmask]
+            signal = samples_i + 1j * samples_q
+            #fitted_envelope = self.amplitudes[r] * np.exp(-self.walf[r] * lagtimes)
+            #fitted_angle = 2 * np.pi * self.vfreq[r] * lagtimes
+            # we want unwrapped phase, right? otherwise we get artifacts at +/- 2 pi
+            #samples_angle = np.angle(samples_i + 1j * samples_q)
+            #samples_envelope = np.sqrt((samples_i ** 2) + (samples_q ** 2))
+            #self.phase_mse[r] = metrics.mean_squared_error(samples_angle, fitted_angle)
+            #self.envelope_mse[r] = metrics.mean_squared_error(samples_envelope, fitted_envelope)
+            phi_sigma,slope_sigma,v_sigma = phase_fit_error(signal, lagtimes, self.tfreq * 1000, self.v[r])
+            self.phi_sigma[r] = phi_sigma
+            self.slope_sigma[r] = slope_sigma
+            self.v_sigma[r] = v_sigma
+            #self.envelope_mse[r] = metrics.mean_squared_error(samples_envelope, fitted_envelope)
+
 
     # pickle a pulse for later analysis
     def pickle_pulse(self, filename='pulse_mcm20140828.p'):
