@@ -13,7 +13,8 @@
 # TODO: add r2 to fit
 
 import argparse
-import pydarn.sdio as sdio
+import davitpy
+import davitpy.pydarn.sdio as sdio
 import datetime, calendar, time
 import numpy as np
 import h5py
@@ -31,6 +32,7 @@ FITLOMB_REVISION_MINOR = 8
 ORIGIN_CODE = 'pydarncuda_fitlomb.py'
 DATA_DIR = '/home/' + getpass.getuser() + '/fitlomb/'
 FITLOMB_README = 'This group contains data from one SuperDARN pulse sequence with Lomb-Scargle Periodogram fitting.'
+davitpy.rcParams['DAVIT_LOCAL_DIRFORMAT'] = '/raid0/SuperDARN/data/{ftype}/{year}/{month}.{day}/'
 
 I_OFFSET = 0
 Q_OFFSET = 1
@@ -50,7 +52,7 @@ LOMB_PASSES = 1
 NFREQS = 512 
 NALFS = 512 
 
-DEBUG = False 
+DEBUG = True 
 LAGDEBUG = False 
 
 GROUP_ATTR_TYPES = {\
@@ -115,9 +117,9 @@ class CULombFit:
         self.acfq = acfd[:,:,Q_OFFSET]
         self.tfreq = self.rawacf.prm.tfreq # transmit frequency (kHz)
         self.bmnum = self.rawacf.bmnum # beam number
-        self.pwr0 = self.rawacf.fit.pwr0 # pwr0
+        self.pwr0 = self.rawacf.recordDict['pwr0'] # pwr0
         self.recordtime = record.time 
-               
+        
         # thresholds on velocity and spectral width for surface scatter flag (m/s)
         self.v_thresh = 30.
         self.w_thresh = 90. # blanchard, 2009
@@ -192,7 +194,7 @@ class CULombFit:
         grp.attrs['noise.mean'] = np.float32(self.rawacf.prm.noisemean)
         grp.attrs['intt.sc'] = np.int16(self.rawacf.prm.inttsc)
         grp.attrs['intt.us'] = np.int32(self.rawacf.prm.inttus)
-        grp.attrs['channel'] = np.int16(ord(self.rawacf.channel) - ord('a'))
+        grp.attrs['channel'] = np.int16(self.rawacf.channel)
         grp.attrs['bmnum'] = np.int16(self.rawacf.bmnum)
 
         # add times..
@@ -412,7 +414,7 @@ class CULombFit:
     def SetBadlags(self, txlag_cache = None, fitacf_style = True):
         # use jef's fitacf-style badlags detection
         if fitacf_style:
-            self.bad_lags, tup = lagstate.fitacf_bad_lags(self.rawacf.prm, self.rawacf.fit.pwr0, np.array(self.rawacf.rawacf.acfd))
+            self.bad_lags, tup = lagstate.fitacf_bad_lags(self.rawacf.prm, self.pwr0, np.array(self.rawacf.rawacf.acfd))
 
         # set tx lags as bad, and convolute pulse sequence with lag0 power to estimate cross range interference 
         else:
@@ -461,12 +463,18 @@ def generate_fitlomb(record):
 
     # open records, lock so multiple processes don't step over eachother unpacking and copying rawacfs to /tmp 
     lock.acquire()
-    myPtr = sdio.radDataOpen(stime,radar,eTime=etime,channel=None,bmnum=None,cp=None,fileType='rawacf',filtered=False, src='local')
+    if '.' in radar:
+        channel = radar.split('.')[-1]
+        radar = radar.split('.')[0]
+    else:
+        channel = None
+
+    myPtr = sdio.radDataOpen(stime,radar,eTime=etime,channel=channel,bmnum=None,cp=None,fileType='rawacf',filtered=False, src='local')
     lock.release()
 
     # set up frequency/alpha vectors 
     amax = np.ceil((np.pi * 2 * MAX_TFREQ * MAX_W) / C)
-    fmax = np.ceil(MAX_V * 2 * MAX_TFREQ / C)
+    fmax = np.ceil(MAX_V * 3 * MAX_TFREQ / C)
     freqs = np.linspace(-fmax,fmax, NFREQS)
     alfs = np.linspace(0, amax, NALFS)
     
@@ -604,7 +612,6 @@ def main():
     for radar in args.radars:
         print 'adding ' + radar + ' jobs to pool'
         if not radar in ['ksr.a', 'ade.a', 'adw.a', 'sps.a',  'kod.c', 'kod.d', 'mcm.a', 'mcm.b'] or starttime.year < 2012:
-            pdb.set_trace()
             print radar + ' may not have data on raid0, syncing with bigdipper...'
             cache_data(radar, starttime, endtime)
 
