@@ -78,6 +78,8 @@ def cache_data(radar, startdate, enddate):
         while stagedate <= enddate:
                 bigdipper_dir = ARCHIVE_DIR + stagedate.strftime("/%Y/%m/")
                 chiniak_dir = CACHE_DIR + stagedate.strftime("/%Y/%m.%d/")
+                if not os.path.exists(chiniak_dir):
+                    os.makedirs(chiniak_dir)
                 pattern = '--include=' + stagedate.strftime('"%Y%m%d.*.' + radar + '*rawacf*"')
                 cmdlist = ['rsync', '-avz', '-e', 'ssh', ARCHIVE_USER + '@' + ARCHIVE_COMP + ':' + bigdipper_dir, chiniak_dir, pattern, '--exclude="*"', RSYNC_PATH, '--ignore-existing']
                 print ' '.join(cmdlist)
